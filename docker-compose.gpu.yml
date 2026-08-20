@@ -1,0 +1,29 @@
+# NVIDIA GPU overlay. Use with the CPU compose file:
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
+#
+# Host needs NVIDIA driver + nvidia-container-toolkit.
+# CUDA 12.6 runtime; driver should be recent enough for CUDA 12.x.
+
+services:
+  itranscribe:
+    image: itranscribe-worcker:gpu
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        TARGET: gpu
+        DEVICE: cuda
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cu126
+    environment:
+      DEVICE: cuda
+      CUDA_VISIBLE_DEVICES: "0"
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    gpus: all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

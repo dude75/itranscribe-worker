@@ -1,0 +1,27 @@
+services:
+  itranscribe:
+    image: itranscribe-worcker:cpu
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        TARGET: cpu
+        DEVICE: cpu
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cpu
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      HOST: "0.0.0.0"
+      DATA_DIR: /data
+      MODELS_DIR: /data/models
+      SQLITE_PATH: /data/tasks.db
+      LOG_DIR: /data/logs
+      PERFORMANCE_LOG: /data/logs/performance_log.csv
+      DEVICE: cpu
+      CUDA_VISIBLE_DEVICES: ""
+    volumes:
+      - ./data:/data
+    shm_size: "2gb"
+    command: ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1"]

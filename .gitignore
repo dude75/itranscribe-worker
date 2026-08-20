@@ -1,0 +1,38 @@
+technical/
+
+# Python bytecode и кэш
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache
+
+# Виртуальные окружения и настройки окружения
+.venv/
+.env
+
+# Файлы системы и IDE
+.DS_Store
+*.swp
+.vscode/
+.idea/
+*.code-workspace
+
+# Временные аудио задач в корне (не персистент)
+tmp_*
+
+# Персистентные данные: хранить локально, в git только каркас каталогов
+data/**
+!data/.gitkeep
+!data/models/
+!data/models/.gitkeep
+!data/logs/
+!data/logs/.gitkeep
+
+# Данные и результаты, которые не должны попадать в репозиторий
+example_data/*.csv
+example_data/*.xml
+example_data/.DS_Store
+
+# Docker временные/кэшированные файлы
+*.pid
