@@ -135,6 +135,55 @@ class TaskStore:
             rows = self._conn.execute(query, params).fetchall()
         return [_row_to_record(row) for row in rows]
 
+    def list_queued_fifo(self) -> list[TaskRecord]:
+        """Queued в порядке постановки (timestamp ASC) — для восстановления после рестарта."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM tasks WHERE status = ? ORDER BY timestamp ASC",
+                (TaskStatus.queued.value,),
+            ).fetchall()
+        return [_row_to_record(row) for row in rows]
+
+    def reset_to_queued(self, task_id: str) -> None:
+        """Вернуть running в queued и сбросить поля прогресса, чтобы mark_running снова сработал."""
+        with self._lock:
+            self._conn.execute(
+                """
+                UPDATE tasks SET
+                    status = ?,
+                    started_at = NULL,
+                    finished_at = NULL,
+                    audio_duration_sec = NULL,
+                    asr_time_sec = NULL,
+                    diarization_time_sec = NULL,
+                    alignment_time_sec = NULL,
+                    total_time_sec = NULL,
+                    rtf = NULL,
+                    transcript = NULL,
+                    error = NULL
+                WHERE task_id = ?
+                """,
+                (TaskStatus.queued.value, task_id),
+            )
+            self._conn.commit()
+
+    def delete_by_statuses(self, statuses: tuple[TaskStatus, ...]) -> list[TaskRecord]:
+        if not statuses:
+            return []
+        values = tuple(item.value for item in statuses)
+        placeholders = ",".join("?" * len(values))
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT * FROM tasks WHERE status IN ({placeholders})",
+                values,
+            ).fetchall()
+            self._conn.execute(
+                f"DELETE FROM tasks WHERE status IN ({placeholders})",
+                values,
+            )
+            self._conn.commit()
+        return [_row_to_record(row) for row in rows]
+
     def count_queued(self) -> int:
         with self._lock:
             row = self._conn.execute(
@@ -232,13 +281,6 @@ class TaskStore:
                 ),
             )
             self._conn.commit()
-
-    def interrupt_running(self) -> list[str]:
-        running = self.list_tasks(TaskStatus.running)
-        ids = [item.task_id for item in running]
-        for task_id in ids:
-            self.mark_error(task_id, ErrorDetail(code="interrupted"))
-        return ids
 
     def delete(self, task_id: str) -> bool:
         with self._lock:

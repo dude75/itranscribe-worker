@@ -1,6 +1,6 @@
 # itranscribe-worcker
 
-**Version:** `0.0.1`
+**Version:** `0.0.2`
 
 On-premise **ASR + optional speaker diarization** HTTP service. Submit an audio file, pick ASR (and optionally a diarization family), poll the task until the linear transcript is ready.
 
@@ -24,7 +24,7 @@ On-premise **ASR + optional speaker diarization** HTTP service. Submit an audio 
 - Virtualenv at **`.venv`** (use `./.venv/bin/python` and `./.venv/bin/pip` only)
 - **ffmpeg** on `PATH` (MP3/M4A → WAV, GigaAM longform)
 - Hugging Face account + **accepted licenses** for PyAnnote 3.1 (`pyannote/speaker-diarization-3.1` and its dependencies). Set `HF_TOKEN` in `.env` (the same token downloads Sortformer from Hugging Face). Without a token/license, PyAnnote is unavailable.
-- Disk under `./data` for model weights, SQLite, and logs (not committed)
+- Disk under `./data` for model weights, SQLite, logs, and the task queue tmp (not committed)
 
 ## Install and run
 
@@ -63,9 +63,9 @@ Copy names into `.env`. **Do not put real tokens in git or in this README.** Cha
 | `HF_TOKEN` | Hugging Face token: download PyAnnote, VAD used by GigaAM longform, and the NeMo Sortformer checkpoint. |
 | `HOST` | Bind address (`127.0.0.1` locally; Docker uses `0.0.0.0`). |
 | `PORT` | HTTP port (default `8000`). |
-| `DATA_DIR` | Persistent root (default `./data`). |
+| `DATA_DIR` | Persistent root (default `./data`): models, SQLite, logs, and queue tmp at `{DATA_DIR}/tmp/<task_id>/`. |
 | `MODELS_DIR` | Model weights / HF cache (default `./data/models`). |
-| `SQLITE_PATH` | Task database (default `./data/tasks.db`). Audio is not stored here. |
+| `SQLITE_PATH` | Task database (default `./data/tasks.db`). Audio is not stored here; uploads live under `{DATA_DIR}/tmp/`. |
 | `LOG_DIR` | Application log directory (default `./data/logs`). |
 | `PERFORMANCE_LOG` | Inference metrics CSV (default `./data/logs/performance_log.csv`). |
 | `LOG_ENABLED` | Application file log + app logger. Default `true`. `false` / `0` / `no` = off. Does not affect CSV / `metric_event`. |
@@ -81,7 +81,14 @@ Copy names into `.env`. **Do not put real tokens in git or in this README.** Cha
 | `WORKER_QUEUE_SIZE` | Max `queued` tasks waiting for a slot. Default `4`. Beyond that: `503` `queue_full`. |
 | `TASK_TTL_SEC` | Seconds after `success`/`error` before the SQLite row is deleted. `0` = no TTL (delete only via `DELETE`). |
 
-Everything that must survive a restart lives under `./data` (models, `tasks.db`, logs). Mount that directory in Docker.
+Everything that must survive a restart lives under `./data` (models, `tasks.db`, logs, **and queue tmp** `{DATA_DIR}/tmp/`). Mount that directory in Docker.
+
+After a process restart (or `docker compose restart`) unfinished work is restored from SQLite + those tmp files — **not** resumed mid-pipeline:
+
+- `queued` tasks with an upload file on disk are put back on the in-memory queue (FIFO by `timestamp`). `WORKER_QUEUE_SIZE` is **not** applied on restore, so the queue may be longer than the limit until it drains; new `POST /transcribe` still uses the limit.
+- A task that was `running` is set back to `queued` and run from scratch if its upload file still exists. If the file is gone, it finishes as `error` with `interrupted`.
+- A `queued` task whose upload file is missing finishes as `error` with `missing_upload` and is not enqueued.
+- Graceful shutdown does **not** delete tmp for queued or running tasks. Finished (`success` / `error`) tmp is still cleaned.
 
 ## API
 
@@ -148,7 +155,7 @@ curl -sS "$HOST/tasks?status=success" -H "Authorization: Bearer $TOKEN"
 
 Newest first. No transcript in the list.
 
-### Delete
+### Delete one task
 
 ```bash
 curl -sS -X DELETE "$HOST/tasks/$TASK_ID" -H "Authorization: Bearer $TOKEN"
@@ -157,6 +164,28 @@ curl -sS -X DELETE "$HOST/tasks/$TASK_ID" -H "Authorization: Bearer $TOKEN"
 - `queued` / `success` / `error` → **200**, row removed (queued also drops tmp audio).
 - `running` → **409** `task_running` (in-flight inference is not cancelled).
 
+### Purge queue and history
+
+```bash
+curl -sS -X DELETE "$HOST/tasks" -H "Authorization: Bearer $TOKEN"
+```
+
+Clears the whole queue and finished history. **Does not** cancel a task that is currently `running` (those rows and their tmp stay; HTTP **200**, not **409**). Also removes orphan dirs under `{DATA_DIR}/tmp/` plus leftover CWD `tmp_*` and `{DATA_DIR}/.upload_*`. Does not touch `models/`, `tasks.db`, or logs.
+
+JSON **200**:
+
+```json
+{
+  "status": "ok",
+  "purged_queued": 0,
+  "purged_finished": 0,
+  "purged_tmp": 0,
+  "skipped_running": 0
+}
+```
+
+`purged_tmp` is the number of task directories removed under `{DATA_DIR}/tmp/` plus any legacy CWD `tmp_*` directories removed.
+
 ## Docker Compose
 
 Two images from the same `Dockerfile`: **CPU** (`itranscribe-worcker:cpu`) and **NVIDIA GPU** (`itranscribe-worcker:gpu`). Compose sets `DEVICE` per image (`cpu` / `cuda`). Do not run both stacks on port `8000` at the same time.
@@ -164,7 +193,7 @@ Two images from the same `Dockerfile`: **CPU** (`itranscribe-worcker:cpu`) and *
 ### Prepare
 
 1. Copy `.env.example` → `.env` and fill `API_TOKEN` / `HF_TOKEN` (see [`.env`](#env)).
-2. Create `./data` if it does not exist (weights, SQLite, logs). Compose mounts `./data:/data`.
+2. Create `./data` if it does not exist (weights, SQLite, logs, queue tmp). Compose mounts `./data:/data`.
 3. **GPU only:** NVIDIA driver on the host and [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html). Check: `nvidia-smi` and `docker run --rm --gpus all nvidia/cuda:12.6.3-base-ubuntu24.04 nvidia-smi`.
 
 ### Run
@@ -199,4 +228,6 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml down
 | HTTP **401**, `error.code = unauthorized` | Missing/wrong `Authorization: Bearer …`, or empty `API_TOKEN`. |
 | HTTP **503**, `error.code = queue_full` | Too many `queued` tasks (`WORKER_QUEUE_SIZE`). Wait or raise the limit and restart. |
 | HTTP **200**, `status=error`, `error.code = engine_unavailable` | Requested family is `unavailable` or `disabled` in `/health`. Switch `asr_model` / `diarization_model`, or change preload and restart. |
+| HTTP **200**, `status=error`, `error.code = missing_upload` | Upload file for a queued/restored task is gone from `{DATA_DIR}/tmp/`. |
+| HTTP **200**, `status=error`, `error.code = interrupted` | Process died while the task was `running` and the upload file was missing after restart. |
 | HTTP **422** | Invalid `asr_model` / `diarization_model` (`whisper`/`gigaam`; `nemo`/`pyannote`). Empty `diarization_model` is valid (skip diarization). |

@@ -10,6 +10,8 @@ from pathlib import Path
 import soundfile as sf
 
 TMP_PREFIX = "tmp_"
+TMP_SUBDIR = "tmp"
+UPLOAD_SCRATCH_PREFIX = ".upload_"
 
 
 def _cuda_available() -> bool:
@@ -44,26 +46,81 @@ def infer_device(preference: str | None = None) -> tuple[str, str]:
     raise ValueError(f"DEVICE must be auto, cpu, or cuda (got {raw!r})")
 
 
-def tmp_dir(task_id: str) -> Path:
-    return Path(f"{TMP_PREFIX}{task_id}")
+def _resolve_data_dir(data_dir: str | Path | None = None) -> Path:
+    if data_dir is not None:
+        return Path(data_dir)
+    from app.config import get_settings
+
+    return Path(get_settings().DATA_DIR)
 
 
-def create_tmp(task_id: str) -> Path:
-    path = tmp_dir(task_id)
+def tmp_root(data_dir: str | Path | None = None) -> Path:
+    return _resolve_data_dir(data_dir) / TMP_SUBDIR
+
+
+def tmp_dir(task_id: str, data_dir: str | Path | None = None) -> Path:
+    return tmp_root(data_dir) / task_id
+
+
+def create_tmp(task_id: str, data_dir: str | Path | None = None) -> Path:
+    path = tmp_dir(task_id, data_dir)
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 
-def cleanup_tmp(task_id: str) -> None:
-    path = tmp_dir(task_id)
+def cleanup_tmp(task_id: str, data_dir: str | Path | None = None) -> None:
+    path = tmp_dir(task_id, data_dir)
     shutil.rmtree(path, ignore_errors=True)
 
 
-def cleanup_all_tmp(root: str | Path | None = None) -> None:
+def cleanup_all_tmp(data_dir: str | Path | None = None) -> int:
+    """Удаляет `{DATA_DIR}/tmp/*`. Возвращает число снятых каталогов задач."""
+    root = tmp_root(data_dir)
+    if not root.is_dir():
+        return 0
+    removed = 0
+    for path in root.iterdir():
+        if path.is_dir():
+            shutil.rmtree(path, ignore_errors=True)
+            removed += 1
+    return removed
+
+
+def cleanup_tmp_except(keep_ids: set[str], data_dir: str | Path | None = None) -> int:
+    """Снимает каталоги `{DATA_DIR}/tmp/<id>/`, кроме keep_ids. Возвращает число удалённых."""
+    root = tmp_root(data_dir)
+    if not root.is_dir():
+        return 0
+    removed = 0
+    for path in root.iterdir():
+        if path.is_dir() and path.name not in keep_ids:
+            shutil.rmtree(path, ignore_errors=True)
+            removed += 1
+    return removed
+
+
+def cleanup_legacy_cwd_tmp(root: str | Path | None = None) -> int:
+    """Удаляет устаревшие `tmp_*` в CWD (старый layout). Возвращает число каталогов."""
     base = Path.cwd() if root is None else Path(root)
+    removed = 0
     for path in base.glob(f"{TMP_PREFIX}*"):
         if path.is_dir():
             shutil.rmtree(path, ignore_errors=True)
+            removed += 1
+    return removed
+
+
+def cleanup_upload_scratch(data_dir: str | Path | None = None) -> int:
+    """Удаляет хвосты `{DATA_DIR}/.upload_*`. Не входит в счётчик purged_tmp."""
+    base = _resolve_data_dir(data_dir)
+    if not base.is_dir():
+        return 0
+    removed = 0
+    for path in base.glob(f"{UPLOAD_SCRATCH_PREFIX}*"):
+        if path.is_file():
+            path.unlink(missing_ok=True)
+            removed += 1
+    return removed
 
 
 def audio_duration_sec(wav_path: str | Path) -> float:
@@ -98,10 +155,10 @@ def _run_ffmpeg(src: Path, dst: Path) -> None:
 CONVERT_SUFFIXES = {".mp3", ".m4a"}
 
 
-def prepare_wav(src: str | Path, task_id: str) -> Path:
-    """Кладёт WAV в tmp_<task_id>/audio.wav. MP3/M4A конвертирует через ffmpeg."""
+def prepare_wav(src: str | Path, task_id: str, data_dir: str | Path | None = None) -> Path:
+    """Кладёт WAV в {DATA_DIR}/tmp/<task_id>/audio.wav. MP3/M4A конвертирует через ffmpeg."""
     src_path = Path(src)
-    dest_dir = create_tmp(task_id)
+    dest_dir = create_tmp(task_id, data_dir)
     dest = dest_dir / "audio.wav"
     suffix = src_path.suffix.lower()
     if suffix == ".wav":

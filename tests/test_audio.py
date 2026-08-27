@@ -7,8 +7,10 @@ import numpy as np
 import pytest
 import soundfile as sf
 
+from app.config import get_settings
 from app.audio import (
     audio_duration_sec,
+    cleanup_all_tmp,
     cleanup_tmp,
     create_tmp,
     infer_device,
@@ -67,37 +69,53 @@ def test_wav_duration_matches(wav_file: Path) -> None:
     assert duration == pytest.approx(DURATION, abs=1e-3)
 
 
-def test_prepare_wav_copies_into_tmp(wav_file: Path) -> None:
-    task_id = "audio-wav-1"
+def test_tmp_lives_under_data_dir_not_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    task_id = "path-check"
     try:
-        dest = prepare_wav(wav_file, task_id)
-        assert dest.exists()
-        assert dest.parent == tmp_dir(task_id)
-        assert audio_duration_sec(dest) == pytest.approx(DURATION, abs=1e-3)
+        path = create_tmp(task_id)
+        assert path == tmp_path / "tmp" / task_id
+        assert path == tmp_dir(task_id)
+        assert not (Path.cwd() / f"tmp_{task_id}").exists()
     finally:
         cleanup_tmp(task_id)
-    assert not tmp_dir(task_id).exists()
+        get_settings.cache_clear()
 
 
-def test_cleanup_tmp_after_success_or_error() -> None:
+def test_prepare_wav_copies_into_tmp(wav_file: Path, tmp_path: Path) -> None:
+    task_id = "audio-wav-1"
+    try:
+        dest = prepare_wav(wav_file, task_id, tmp_path)
+        assert dest.exists()
+        assert dest.parent == tmp_path / "tmp" / task_id
+        assert dest.parent == tmp_dir(task_id, tmp_path)
+        assert not (Path.cwd() / f"tmp_{task_id}").exists()
+        assert audio_duration_sec(dest) == pytest.approx(DURATION, abs=1e-3)
+    finally:
+        cleanup_tmp(task_id, tmp_path)
+    assert not tmp_dir(task_id, tmp_path).exists()
+
+
+def test_cleanup_tmp_after_success_or_error(tmp_path: Path) -> None:
     task_id = "audio-cleanup-1"
-    path = create_tmp(task_id)
+    path = create_tmp(task_id, tmp_path)
     (path / "audio.wav").write_bytes(b"x")
     assert path.exists()
-    cleanup_tmp(task_id)
+    cleanup_tmp(task_id, tmp_path)
     assert not path.exists()
-    cleanup_tmp(task_id)
+    cleanup_tmp(task_id, tmp_path)
 
 
-def test_cleanup_all_tmp_removes_leftovers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from app.audio import cleanup_all_tmp
-
-    monkeypatch.chdir(tmp_path)
-    create_tmp("left-1")
-    create_tmp("left-2")
-    assert (tmp_path / "tmp_left-1").is_dir()
+def test_cleanup_all_tmp_removes_leftovers(tmp_path: Path) -> None:
+    create_tmp("left-1", tmp_path)
+    create_tmp("left-2", tmp_path)
+    assert (tmp_path / "tmp" / "left-1").is_dir()
+    assert not (tmp_path / "tmp_left-1").exists()
     cleanup_all_tmp(tmp_path)
-    assert list(tmp_path.glob("tmp_*")) == []
+    assert list((tmp_path / "tmp").glob("*")) == []
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg не установлен")
@@ -112,12 +130,13 @@ def test_mp3_converts_to_wav(wav_file: Path, tmp_path: Path) -> None:
     )
     task_id = "audio-mp3-1"
     try:
-        dest = prepare_wav(mp3, task_id)
+        dest = prepare_wav(mp3, task_id, tmp_path)
         assert dest.suffix == ".wav"
+        assert dest.parent == tmp_path / "tmp" / task_id
         assert audio_duration_sec(dest) == pytest.approx(DURATION, abs=0.05)
     finally:
-        cleanup_tmp(task_id)
-    assert not tmp_dir(task_id).exists()
+        cleanup_tmp(task_id, tmp_path)
+    assert not tmp_dir(task_id, tmp_path).exists()
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg не установлен")
@@ -132,9 +151,10 @@ def test_m4a_converts_to_wav(wav_file: Path, tmp_path: Path) -> None:
     )
     task_id = "audio-m4a-1"
     try:
-        dest = prepare_wav(m4a, task_id)
+        dest = prepare_wav(m4a, task_id, tmp_path)
         assert dest.suffix == ".wav"
+        assert dest.parent == tmp_path / "tmp" / task_id
         assert audio_duration_sec(dest) == pytest.approx(DURATION, abs=0.05)
     finally:
-        cleanup_tmp(task_id)
-    assert not tmp_dir(task_id).exists()
+        cleanup_tmp(task_id, tmp_path)
+    assert not tmp_dir(task_id, tmp_path).exists()

@@ -7,10 +7,16 @@ import shutil
 import uuid
 from pathlib import Path
 
-from app.audio import cleanup_tmp, create_tmp
+from app.audio import (
+    cleanup_legacy_cwd_tmp,
+    cleanup_tmp,
+    cleanup_tmp_except,
+    cleanup_upload_scratch,
+    create_tmp,
+)
 from app.config import Settings, get_settings
 from app.pipeline import checkpoints_for, run_pipeline
-from app.schemas import AsrModel, DiarizationModel, TaskStatus
+from app.schemas import AsrModel, DiarizationModel, ErrorDetail, PurgeResult, TaskStatus
 from app.tasks import TaskRecord, TaskStore
 
 
@@ -20,6 +26,10 @@ class QueueFullError(Exception):
 
 class TaskRunningError(Exception):
     code = "task_running"
+
+
+def _upload_exists(record: TaskRecord) -> bool:
+    return bool(record.upload_path) and Path(record.upload_path).is_file()
 
 
 class TaskRunner:
@@ -36,12 +46,25 @@ class TaskRunner:
 
     async def start(self) -> None:
         Path(self.settings.LOG_DIR).mkdir(parents=True, exist_ok=True)
-        for task_id in self.store.interrupt_running():
-            cleanup_tmp(task_id)
-        for record in self.store.list_tasks(TaskStatus.queued):
-            await self._queue.put(record.task_id)
+        self._restore_unfinished()
         self._dispatcher = asyncio.create_task(self._dispatch_loop())
         self._ttl_task = asyncio.create_task(self._ttl_loop())
+
+    def _restore_unfinished(self) -> None:
+        data_dir = self.settings.DATA_DIR
+        for record in self.store.list_tasks(TaskStatus.running):
+            if _upload_exists(record):
+                self.store.reset_to_queued(record.task_id)
+            else:
+                self.store.mark_error(record.task_id, ErrorDetail(code="interrupted"))
+                cleanup_tmp(record.task_id, data_dir)
+        for record in self.store.list_tasks(TaskStatus.queued):
+            if not _upload_exists(record):
+                self.store.mark_error(record.task_id, ErrorDetail(code="missing_upload"))
+                cleanup_tmp(record.task_id, data_dir)
+        # WORKER_QUEUE_SIZE не применяется: после рестарта очередь может быть длиннее лимита.
+        for record in self.store.list_queued_fifo():
+            self._queue.put_nowait(record.task_id)
 
     async def stop(self) -> None:
         if self._dispatcher is not None:
@@ -53,8 +76,10 @@ class TaskRunner:
             task.cancel()
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
+        # queued/running tmp сохраняем — после рестарта пайплайн стартует с upload-файла.
         for record in self.store.list_tasks():
-            cleanup_tmp(record.task_id)
+            if record.status in {TaskStatus.success, TaskStatus.error}:
+                cleanup_tmp(record.task_id, self.settings.DATA_DIR)
         self.store.close()
 
     async def submit(
@@ -67,7 +92,7 @@ class TaskRunner:
             if self.store.count_queued() >= self.settings.WORKER_QUEUE_SIZE:
                 raise QueueFullError()
             task_id = str(uuid.uuid4())
-            tmp = create_tmp(task_id)
+            tmp = create_tmp(task_id, self.settings.DATA_DIR)
             src = Path(src_path)
             dest = tmp / f"upload{src.suffix.lower()}"
             shutil.copy2(src, dest)
@@ -91,7 +116,29 @@ class TaskRunner:
             raise TaskRunningError()
         if status is TaskStatus.queued:
             self._cancelled.add(task_id)
-        cleanup_tmp(task_id)
+        cleanup_tmp(task_id, self.settings.DATA_DIR)
+
+    async def purge(self) -> PurgeResult:
+        """Снести queued и историю; running не трогать. SQL только в store."""
+        async with self._submit_lock:
+            running = self.store.list_tasks(TaskStatus.running)
+            keep_ids = {item.task_id for item in running}
+            queued = self.store.delete_by_statuses((TaskStatus.queued,))
+            for record in queued:
+                self._cancelled.add(record.task_id)
+            finished = self.store.delete_by_statuses(
+                (TaskStatus.success, TaskStatus.error)
+            )
+            purged_tmp = cleanup_tmp_except(keep_ids, self.settings.DATA_DIR)
+            purged_tmp += cleanup_legacy_cwd_tmp()
+            cleanup_upload_scratch(self.settings.DATA_DIR)
+            return PurgeResult(
+                status="ok",
+                purged_queued=len(queued),
+                purged_finished=len(finished),
+                purged_tmp=purged_tmp,
+                skipped_running=len(running),
+            )
 
     async def _dispatch_loop(self) -> None:
         while True:

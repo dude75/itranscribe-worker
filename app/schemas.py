@@ -96,3 +96,11 @@ class HealthResponse(BaseModel):
     version: str
     engines: dict[str, EngineStatus] = Field(default_factory=dict)
     device: str = "cpu"
+
+
+class PurgeResult(BaseModel):
+    status: str = "ok"
+    purged_queued: int
+    purged_finished: int
+    purged_tmp: int
+    skipped_running: int

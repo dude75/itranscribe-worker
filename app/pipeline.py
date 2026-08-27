@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import sqlite3
 import time
+from pathlib import Path
 
 from app.alignment import align, utterances_from_words
 from app.audio import audio_duration_sec, cleanup_tmp, infer_device, prepare_wav
@@ -10,7 +12,7 @@ from app.config import Settings
 from app.engines.base import ASREngine, DiarizationEngine
 from app.engines.stubs import StubASR, StubDiarization
 from app.metrics import MetricEvent, write_metric
-from app.schemas import AsrModel, DiarizationModel, ErrorDetail, TranscriptLine
+from app.schemas import AsrModel, DiarizationModel, ErrorDetail, TaskStatus, TranscriptLine
 from app.tasks import TaskStore
 
 
@@ -46,7 +48,7 @@ def _diarization_label(model: DiarizationModel | None) -> str | None:
 def run_pipeline(store: TaskStore, settings: Settings, task_id: str) -> None:
     infer_device()
     record = store.get(task_id)
-    if record is None or record.upload_path is None:
+    if record is None:
         return
     if not store.mark_running(task_id):
         return
@@ -56,7 +58,10 @@ def run_pipeline(store: TaskStore, settings: Settings, task_id: str) -> None:
     diar_time: float | None = None
     align_time: float | None = None
     try:
-        wav = prepare_wav(record.upload_path, task_id)
+        upload = Path(record.upload_path) if record.upload_path else None
+        if upload is None or not upload.is_file():
+            raise TaskFailed("missing_upload")
+        wav = prepare_wav(record.upload_path, task_id, settings.DATA_DIR)
         duration = audio_duration_sec(wav)
         if duration <= 0:
             raise TaskFailed("zero_duration", "audio duration is zero")
@@ -154,4 +159,10 @@ def run_pipeline(store: TaskStore, settings: Settings, task_id: str) -> None:
             ),
         )
     finally:
-        cleanup_tmp(task_id)
+        # Не трогаем tmp running/queued: после рестарта нужен upload. Чистим только финал.
+        try:
+            current = store.get(task_id)
+        except sqlite3.Error:
+            return
+        if current is None or current.status in {TaskStatus.success, TaskStatus.error}:
+            cleanup_tmp(task_id, settings.DATA_DIR)

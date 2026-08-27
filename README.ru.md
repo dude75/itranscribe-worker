@@ -1,6 +1,6 @@
 # itranscribe-worcker
 
-**Версия:** `0.0.1`
+**Версия:** `0.0.2`
 
 Локальный (on-premise) HTTP-сервис **ASR + опциональная диаризация спикеров**. Отправляете аудио, выбираете ASR (и при необходимости семейство диаризации), опрашиваете задачу, пока не будет готов линейный транскрипт.
 
@@ -24,7 +24,7 @@
 - Виртуальное окружение **`.venv`** (только `./.venv/bin/python` и `./.venv/bin/pip`)
 - **ffmpeg** в `PATH` (MP3/M4A → WAV, GigaAM longform)
 - Аккаунт Hugging Face и **принятые лицензии** PyAnnote 3.1 (`pyannote/speaker-diarization-3.1` и зависимости). В `.env` нужен `HF_TOKEN` (им же качается Sortformer с Hugging Face). Без токена/лицензии PyAnnote недоступен.
-- Диск под `./data` для весов, SQLite и логов (в git не коммитится)
+- Диск под `./data` для весов, SQLite, логов и tmp очереди задач (в git не коммитится)
 
 ## Установка и запуск
 
@@ -63,9 +63,9 @@ Docker: [Docker Compose](#docker-compose) (образы CPU или NVIDIA GPU).
 | `HF_TOKEN` | Токен Hugging Face: скачать PyAnnote, VAD для GigaAM longform и чекпоинт NeMo Sortformer. |
 | `HOST` | Интерфейс (`127.0.0.1` локально; в Docker — `0.0.0.0`). |
 | `PORT` | HTTP-порт (по умолчанию `8000`). |
-| `DATA_DIR` | Корень персистентных данных (по умолчанию `./data`). |
+| `DATA_DIR` | Корень персистентных данных (по умолчанию `./data`): модели, SQLite, логи и tmp очереди `{DATA_DIR}/tmp/<task_id>/`. |
 | `MODELS_DIR` | Веса / кэш HF (по умолчанию `./data/models`). |
-| `SQLITE_PATH` | БД задач (по умолчанию `./data/tasks.db`). Аудио сюда не пишется. |
+| `SQLITE_PATH` | БД задач (по умолчанию `./data/tasks.db`). Аудио сюда не пишется; загрузки лежат в `{DATA_DIR}/tmp/`. |
 | `LOG_DIR` | Каталог прикладных логов (по умолчанию `./data/logs`). |
 | `PERFORMANCE_LOG` | CSV метрик инференса (по умолчанию `./data/logs/performance_log.csv`). |
 | `LOG_ENABLED` | Прикладной лог-файл + app-logger. По умолчанию `true`. `false` / `0` / `no` — выкл. Не трогает CSV / `metric_event`. |
@@ -81,7 +81,14 @@ Docker: [Docker Compose](#docker-compose) (образы CPU или NVIDIA GPU).
 | `WORKER_QUEUE_SIZE` | Сколько задач может висеть в `queued`. По умолчанию `4`. Сверх лимита: `503` `queue_full`. |
 | `TASK_TTL_SEC` | Через сколько секунд после `success`/`error` удалить строку из SQLite. `0` — не удалять по TTL (только `DELETE`). |
 
-Всё, что должно пережить рестарт, лежит в `./data` (модели, `tasks.db`, логи). В Docker монтируйте этот каталог.
+Всё, что должно пережить рестарт, лежит в `./data` (модели, `tasks.db`, логи **и tmp очереди** `{DATA_DIR}/tmp/`). В Docker монтируйте этот каталог.
+
+После рестарта процесса (или `docker compose restart`) незавершённые задачи восстанавливаются из SQLite и этих tmp-файлов — **не** с середины пайплайна:
+
+- Задачи в `queued` с файлом на диске снова ставятся во внутреннюю очередь (FIFO по `timestamp`). `WORKER_QUEUE_SIZE` при восстановлении **не** применяется: очередь может быть длиннее лимита, пока не разгребётся; новые `POST /transcribe` по-прежнему смотрят на лимит.
+- Задача, которая была `running`, возвращается в `queued` и считается заново, если upload-файл на месте. Если файла нет — `error` с кодом `interrupted`.
+- `queued` без файла на диске завершается как `error` с кодом `missing_upload` и в RAM-очередь не попадает.
+- Корректное завершение процесса **не** удаляет tmp у queued и running. Tmp завершённых (`success` / `error`) по-прежнему чистится.
 
 ## API
 
@@ -148,7 +155,7 @@ curl -sS "$HOST/tasks?status=success" -H "Authorization: Bearer $TOKEN"
 
 Новые сверху. Transcript в списке нет.
 
-### Удаление
+### Удаление одной задачи
 
 ```bash
 curl -sS -X DELETE "$HOST/tasks/$TASK_ID" -H "Authorization: Bearer $TOKEN"
@@ -157,6 +164,28 @@ curl -sS -X DELETE "$HOST/tasks/$TASK_ID" -H "Authorization: Bearer $TOKEN"
 - `queued` / `success` / `error` → **200**, строка удалена (для queued ещё снимается tmp-аудио).
 - `running` → **409** `task_running` (идущий инференс не прерывается).
 
+### Полная очистка очереди и истории
+
+```bash
+curl -sS -X DELETE "$HOST/tasks" -H "Authorization: Bearer $TOKEN"
+```
+
+Сносит всю очередь и завершённую историю. **Не** отменяет задачу в `running` (строка и её tmp остаются; HTTP **200**, не **409**). Также удаляет сиротские каталоги в `{DATA_DIR}/tmp/`, хвосты CWD `tmp_*` и `{DATA_DIR}/.upload_*`. Не трогает `models/`, `tasks.db` и логи.
+
+JSON **200**:
+
+```json
+{
+  "status": "ok",
+  "purged_queued": 0,
+  "purged_finished": 0,
+  "purged_tmp": 0,
+  "skipped_running": 0
+}
+```
+
+`purged_tmp` — число каталогов задач, удалённых из `{DATA_DIR}/tmp/`, плюс число снятых устаревших CWD `tmp_*`.
+
 ## Docker Compose
 
 Два образа из одного `Dockerfile`: **CPU** (`itranscribe-worcker:cpu`) и **NVIDIA GPU** (`itranscribe-worcker:gpu`). Compose сам ставит `DEVICE` (`cpu` / `cuda`). Не поднимайте оба стека на порту `8000` одновременно.
@@ -164,7 +193,7 @@ curl -sS -X DELETE "$HOST/tasks/$TASK_ID" -H "Authorization: Bearer $TOKEN"
 ### Подготовка
 
 1. Скопируйте `.env.example` → `.env` и заполните `API_TOKEN` / `HF_TOKEN` (см. [`.env`](#env)).
-2. Каталог `./data` (веса, SQLite, логи). Compose монтирует `./data:/data`.
+2. Каталог `./data` (веса, SQLite, логи, tmp очереди). Compose монтирует `./data:/data`.
 3. **Только GPU:** драйвер NVIDIA на хосте и [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html). Проверка: `nvidia-smi` и `docker run --rm --gpus all nvidia/cuda:12.6.3-base-ubuntu24.04 nvidia-smi`.
 
 ### Запуск
@@ -199,4 +228,6 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml down
 | HTTP **401**, `error.code = unauthorized` | Нет / неверный `Authorization: Bearer …`, или пустой `API_TOKEN`. |
 | HTTP **503**, `error.code = queue_full` | Слишком много задач в `queued` (`WORKER_QUEUE_SIZE`). Подождите или увеличьте лимит и перезапустите. |
 | HTTP **200**, `status=error`, `error.code = engine_unavailable` | Запрошенное семейство `unavailable` или `disabled` в `/health`. Смените `asr_model` / `diarization_model` или поменяйте preload и перезапустите. |
+| HTTP **200**, `status=error`, `error.code = missing_upload` | Upload-файл queued/восстановленной задачи пропал из `{DATA_DIR}/tmp/`. |
+| HTTP **200**, `status=error`, `error.code = interrupted` | Процесс умер, пока задача была `running`, и после рестарта файла не оказалось. |
 | HTTP **422** | Неверный `asr_model` / `diarization_model` (`whisper`/`gigaam`; `nemo`/`pyannote`). Пустой `diarization_model` допустим (без диаризации). |

@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from app.audio import tmp_dir
 from app.config import get_settings
 from app.main import app
 from app.schemas import AsrModel, DiarizationModel
@@ -98,6 +99,7 @@ def test_smoke_four_combinations(client: TestClient, speech_bytes: tuple[str, by
             continue
         assert body["status"] == "success", body
         assert body["transcript"] is not None
+            assert not tmp_dir(task_id).exists()
         assert not Path(f"tmp_{task_id}").exists()
         results[key] = "ok"
 

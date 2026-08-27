@@ -24,6 +24,7 @@ from app.schemas import (
     ErrorDetail,
     HealthResponse,
     OptionalDiarizationModel,
+    PurgeResult,
     TaskListItem,
     TaskMeta,
     TaskResponse,
@@ -148,6 +149,14 @@ async def transcribe(
     finally:
         scratch.unlink(missing_ok=True)
     return _record_to_response(record)
+
+
+@app.delete("/tasks", response_model=PurgeResult)
+async def purge_tasks(
+    _: str = Depends(require_api_token),
+    runner: TaskRunner = Depends(get_runner),
+) -> PurgeResult:
+    return await runner.purge()
 
 
 @app.get("/tasks", response_model=list[TaskListItem])
