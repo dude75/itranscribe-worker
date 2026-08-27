@@ -1,6 +1,6 @@
-# itranscribe-worcker
+# itranscribe-worker
 
-**Version:** `0.0.2`
+**Version:** `0.0.3`
 
 On-premise **ASR + optional speaker diarization** HTTP service. Submit an audio file, pick ASR (and optionally a diarization family), poll the task until the linear transcript is ready.
 
@@ -21,10 +21,12 @@ On-premise **ASR + optional speaker diarization** HTTP service. Submit an audio 
 ## Requirements
 
 - Python **3.12**
-- Virtualenv at **`.venv`** (use `./.venv/bin/python` and `./.venv/bin/pip` only)
+- Virtualenv at `.venv` (use `./.venv/bin/python` and `./.venv/bin/pip` only)
 - **ffmpeg** on `PATH` (MP3/M4A → WAV, GigaAM longform)
 - Hugging Face account + **accepted licenses** for PyAnnote 3.1 (`pyannote/speaker-diarization-3.1` and its dependencies). Set `HF_TOKEN` in `.env` (the same token downloads Sortformer from Hugging Face). Without a token/license, PyAnnote is unavailable.
 - Disk under `./data` for model weights, SQLite, logs, and the task queue tmp (not committed)
+
+
 
 ## Install and run
 
@@ -41,7 +43,7 @@ Create a `.env` in the repo root (see table below). Do not commit it. Then:
 ./.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
 ```
 
-Always keep **uvicorn `--workers 1`**. Parallelism of jobs is `WORKERS` in `.env` (slots inside this one process), not extra uvicorn processes.
+Always keep **uvicorn** `--workers 1`. Parallelism of jobs is `WORKERS` in `.env` (slots inside this one process), not extra uvicorn processes.
 
 First start **preloads** the families chosen by `PRELOAD_ASR` and `PRELOAD_DIARIZATION` (default `all` = all four). Weights for skipped families are not downloaded. A failed engine is `unavailable`; a skipped one is `disabled`. The process stays up. The first real task should not download weights again if they already sit in `./data/models`.
 
@@ -57,29 +59,31 @@ Docker: [Docker Compose](#docker-compose) (CPU or NVIDIA GPU images).
 
 Copy names into `.env`. **Do not put real tokens in git or in this README.** Changing a value requires a process restart (loaded checkpoints stay in memory until then).
 
-| Variable | Meaning |
-|----------|---------|
-| `API_TOKEN` | Bearer key for all routes except `/health`. Empty = nobody is authorized. Not the same as `HF_TOKEN`. |
-| `HF_TOKEN` | Hugging Face token: download PyAnnote, VAD used by GigaAM longform, and the NeMo Sortformer checkpoint. |
-| `HOST` | Bind address (`127.0.0.1` locally; Docker uses `0.0.0.0`). |
-| `PORT` | HTTP port (default `8000`). |
-| `DATA_DIR` | Persistent root (default `./data`): models, SQLite, logs, and queue tmp at `{DATA_DIR}/tmp/<task_id>/`. |
-| `MODELS_DIR` | Model weights / HF cache (default `./data/models`). |
-| `SQLITE_PATH` | Task database (default `./data/tasks.db`). Audio is not stored here; uploads live under `{DATA_DIR}/tmp/`. |
-| `LOG_DIR` | Application log directory (default `./data/logs`). |
-| `PERFORMANCE_LOG` | Inference metrics CSV (default `./data/logs/performance_log.csv`). |
-| `LOG_ENABLED` | Application file log + app logger. Default `true`. `false` / `0` / `no` = off. Does not affect CSV / `metric_event`. |
-| `PERFORMANCE_LOG_ENABLED` | CSV row + JSON `metric_event` on stdout when a task finishes. Default `true`. `false` / `0` / `no` = off. Does not affect app logs. |
-| `WHISPER_MODEL` | Faster-Whisper checkpoint name (default `large-v3-turbo`). |
-| `GIGAAM_MODEL` | `gigaam.load_model` name (default `multilingual_large_ctc`). |
-| `PYANNOTE_MODEL` | PyAnnote pipeline id (default `pyannote/speaker-diarization-3.1`). |
-| `NEMO_MODEL` | Hugging Face id of Sortformer for the `nemo` family (default `nvidia/diar_streaming_sortformer_4spk-v2`, CC-BY-4.0). Maximum 4 speakers. |
-| `PRELOAD_ASR` | Which ASR families to load and download at startup: `whisper`, `gigaam`, or `all` (default). |
-| `PRELOAD_DIARIZATION` | Which diarization families to load and download at startup: `nemo`, `pyannote`, or `all` (default). |
-| `DEVICE` | Inference device: `auto` (default), `cpu`, or `cuda`. `auto` uses CUDA when `torch.cuda.is_available()`, otherwise CPU. `cpu` never uses the GPU. `cuda` requires CUDA or the process fails at startup. Docker Compose sets this per image. |
-| `WORKERS` | How many **tasks** may run at once in this process. Default `1`. Not uvicorn workers; weights are shared. |
-| `WORKER_QUEUE_SIZE` | Max `queued` tasks waiting for a slot. Default `4`. Beyond that: `503` `queue_full`. |
-| `TASK_TTL_SEC` | Seconds after `success`/`error` before the SQLite row is deleted. `0` = no TTL (delete only via `DELETE`). |
+
+| Variable                  | Meaning                                                                                                                                                                                                                                     |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `API_TOKEN`               | Bearer key for all routes except `/health`. Empty = nobody is authorized. Not the same as `HF_TOKEN`.                                                                                                                                       |
+| `HF_TOKEN`                | Hugging Face token: download PyAnnote, VAD used by GigaAM longform, and the NeMo Sortformer checkpoint.                                                                                                                                     |
+| `HOST`                    | Bind address (`127.0.0.1` locally; Docker uses `0.0.0.0`).                                                                                                                                                                                  |
+| `PORT`                    | HTTP port (default `8000`).                                                                                                                                                                                                                 |
+| `DATA_DIR`                | Persistent root (default `./data`): models, SQLite, logs, and queue tmp at `{DATA_DIR}/tmp/<task_id>/`.                                                                                                                                     |
+| `MODELS_DIR`              | Model weights / HF cache (default `./data/models`).                                                                                                                                                                                         |
+| `SQLITE_PATH`             | Task database (default `./data/tasks.db`). Audio is not stored here; uploads live under `{DATA_DIR}/tmp/`.                                                                                                                                  |
+| `LOG_DIR`                 | Application log directory (default `./data/logs`).                                                                                                                                                                                          |
+| `PERFORMANCE_LOG`         | Inference metrics CSV (default `./data/logs/performance_log.csv`).                                                                                                                                                                          |
+| `LOG_ENABLED`             | Application file log + app logger. Default `true`. `false` / `0` / `no` = off. Does not affect CSV / `metric_event`.                                                                                                                        |
+| `PERFORMANCE_LOG_ENABLED` | CSV row + JSON `metric_event` on stdout when a task finishes. Default `true`. `false` / `0` / `no` = off. Does not affect app logs.                                                                                                         |
+| `WHISPER_MODEL`           | Faster-Whisper checkpoint name (default `large-v3-turbo`).                                                                                                                                                                                  |
+| `GIGAAM_MODEL`            | `gigaam.load_model` name (default `multilingual_large_ctc`).                                                                                                                                                                                |
+| `PYANNOTE_MODEL`          | PyAnnote pipeline id (default `pyannote/speaker-diarization-3.1`).                                                                                                                                                                          |
+| `NEMO_MODEL`              | Hugging Face id of Sortformer for the `nemo` family (default `nvidia/diar_streaming_sortformer_4spk-v2`, CC-BY-4.0). Maximum 4 speakers.                                                                                                    |
+| `PRELOAD_ASR`             | Which ASR families to load and download at startup: `whisper`, `gigaam`, or `all` (default).                                                                                                                                                |
+| `PRELOAD_DIARIZATION`     | Which diarization families to load and download at startup: `nemo`, `pyannote`, or `all` (default).                                                                                                                                         |
+| `DEVICE`                  | Inference device: `auto` (default), `cpu`, or `cuda`. `auto` uses CUDA when `torch.cuda.is_available()`, otherwise CPU. `cpu` never uses the GPU. `cuda` requires CUDA or the process fails at startup. Docker Compose sets this per image. |
+| `WORKERS`                 | How many **tasks** may run at once in this process. Default `1`. Not uvicorn workers; weights are shared.                                                                                                                                   |
+| `WORKER_QUEUE_SIZE`       | Max `queued` tasks waiting for a slot. Default `4`. Beyond that: `503` `queue_full`.                                                                                                                                                        |
+| `TASK_TTL_SEC`            | Seconds after `success`/`error` before the SQLite row is deleted. `0` = no TTL (delete only via `DELETE`).                                                                                                                                  |
+
 
 Everything that must survive a restart lives under `./data` (models, `tasks.db`, logs, **and queue tmp** `{DATA_DIR}/tmp/`). Mount that directory in Docker.
 
@@ -89,6 +93,8 @@ After a process restart (or `docker compose restart`) unfinished work is restore
 - A task that was `running` is set back to `queued` and run from scratch if its upload file still exists. If the file is gone, it finishes as `error` with `interrupted`.
 - A `queued` task whose upload file is missing finishes as `error` with `missing_upload` and is not enqueued.
 - Graceful shutdown does **not** delete tmp for queued or running tasks. Finished (`success` / `error`) tmp is still cleaned.
+
+
 
 ## API
 
@@ -146,6 +152,8 @@ while true; do
 done
 ```
 
+
+
 ### List tasks
 
 ```bash
@@ -164,13 +172,15 @@ curl -sS -X DELETE "$HOST/tasks/$TASK_ID" -H "Authorization: Bearer $TOKEN"
 - `queued` / `success` / `error` → **200**, row removed (queued also drops tmp audio).
 - `running` → **409** `task_running` (in-flight inference is not cancelled).
 
+
+
 ### Purge queue and history
 
 ```bash
 curl -sS -X DELETE "$HOST/tasks" -H "Authorization: Bearer $TOKEN"
 ```
 
-Clears the whole queue and finished history. **Does not** cancel a task that is currently `running` (those rows and their tmp stay; HTTP **200**, not **409**). Also removes orphan dirs under `{DATA_DIR}/tmp/` plus leftover CWD `tmp_*` and `{DATA_DIR}/.upload_*`. Does not touch `models/`, `tasks.db`, or logs.
+Clears the whole queue and finished history. **Does not** cancel a task that is currently `running` (those rows and their tmp stay; HTTP **200**, not **409**). Also removes orphan dirs under `{DATA_DIR}/tmp/` plus leftover CWD `tmp_`* and `{DATA_DIR}/.upload_*`. Does not touch `models/`, `tasks.db`, or logs.
 
 JSON **200**:
 
@@ -192,9 +202,11 @@ Two images from the same `Dockerfile`: **CPU** (`itranscribe-worcker:cpu`) and *
 
 ### Prepare
 
-1. Copy `.env.example` → `.env` and fill `API_TOKEN` / `HF_TOKEN` (see [`.env`](#env)).
+1. Copy `.env.example` → `.env` and fill `API_TOKEN` / `HF_TOKEN` (see `[.env](#env)`).
 2. Create `./data` if it does not exist (weights, SQLite, logs, queue tmp). Compose mounts `./data:/data`.
 3. **GPU only:** NVIDIA driver on the host and [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html). Check: `nvidia-smi` and `docker run --rm --gpus all nvidia/cuda:12.6.3-base-ubuntu24.04 nvidia-smi`.
+
+
 
 ### Run
 
@@ -223,11 +235,14 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml down
 
 ## Typical errors
 
-| What you see | Meaning |
-|--------------|---------|
-| HTTP **401**, `error.code = unauthorized` | Missing/wrong `Authorization: Bearer …`, or empty `API_TOKEN`. |
-| HTTP **503**, `error.code = queue_full` | Too many `queued` tasks (`WORKER_QUEUE_SIZE`). Wait or raise the limit and restart. |
-| HTTP **200**, `status=error`, `error.code = engine_unavailable` | Requested family is `unavailable` or `disabled` in `/health`. Switch `asr_model` / `diarization_model`, or change preload and restart. |
-| HTTP **200**, `status=error`, `error.code = missing_upload` | Upload file for a queued/restored task is gone from `{DATA_DIR}/tmp/`. |
-| HTTP **200**, `status=error`, `error.code = interrupted` | Process died while the task was `running` and the upload file was missing after restart. |
-| HTTP **422** | Invalid `asr_model` / `diarization_model` (`whisper`/`gigaam`; `nemo`/`pyannote`). Empty `diarization_model` is valid (skip diarization). |
+
+| What you see                                                    | Meaning                                                                                                                                   |
+| --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| HTTP **401**, `error.code = unauthorized`                       | Missing/wrong `Authorization: Bearer …`, or empty `API_TOKEN`.                                                                            |
+| HTTP **503**, `error.code = queue_full`                         | Too many `queued` tasks (`WORKER_QUEUE_SIZE`). Wait or raise the limit and restart.                                                       |
+| HTTP **200**, `status=error`, `error.code = engine_unavailable` | Requested family is `unavailable` or `disabled` in `/health`. Switch `asr_model` / `diarization_model`, or change preload and restart.    |
+| HTTP **200**, `status=error`, `error.code = missing_upload`     | Upload file for a queued/restored task is gone from `{DATA_DIR}/tmp/`.                                                                    |
+| HTTP **200**, `status=error`, `error.code = interrupted`        | Process died while the task was `running` and the upload file was missing after restart.                                                  |
+| HTTP **422**                                                    | Invalid `asr_model` / `diarization_model` (`whisper`/`gigaam`; `nemo`/`pyannote`). Empty `diarization_model` is valid (skip diarization). |
+
+
