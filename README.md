@@ -1,7 +1,5 @@
 # itranscribe-worker
 
-**Version:** `0.0.3`
-
 On-premise **ASR + optional speaker diarization** HTTP service. Submit an audio file, pick ASR (and optionally a diarization family), poll the task until the linear transcript is ready.
 
 **Language:** [English](README.md) · [Русский](README.ru.md)

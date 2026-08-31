@@ -1,6 +1,6 @@
 services:
   itranscribe:
-    image: itranscribe-worcker:cpu
+    image: itranscribe-worker:cpu
     build:
       context: .
       dockerfile: Dockerfile

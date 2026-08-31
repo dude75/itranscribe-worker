@@ -6,7 +6,7 @@
 
 services:
   itranscribe:
-    image: itranscribe-worcker:gpu
+    image: itranscribe-worker:gpu
     build:
       context: .
       dockerfile: Dockerfile
