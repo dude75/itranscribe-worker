@@ -143,7 +143,7 @@ curl -sS -X POST "$HOST/transcribe" \
 ```
 
 `asr_model`: `whisper` (default) or `gigaam`.  
-`diarization_model`: `nemo` (Sortformer, max 4 speakers) or `pyannote`. Omit the field or send it empty to skip diarization (ASR only). There is no default family — missing/empty means no speaker map.
+`diarization_model`: `nemo` (Sortformer, max 4 speakers) or `pyannote`. Omit the field or send it empty to skip diarization (ASR only). There is no default family — missing/empty means no speaker map. For long files where speed matters, send `nemo`. Use `pyannote` when its speaker map matters more than minimum runtime.
 
 ### Poll one task
 
