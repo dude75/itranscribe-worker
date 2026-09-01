@@ -16,6 +16,7 @@ from app.audio import (
 )
 from app.config import Settings, get_settings
 from app.pipeline import checkpoints_for, run_pipeline
+from app.prometheus_metrics import observe_restore, observe_submitted
 from app.schemas import AsrModel, DiarizationModel, ErrorDetail, PurgeResult, TaskStatus
 from app.tasks import TaskRecord, TaskStore
 
@@ -57,14 +58,17 @@ class TaskRunner:
                 self.store.reset_to_queued(record.task_id)
             else:
                 self.store.mark_error(record.task_id, ErrorDetail(code="interrupted"))
+                observe_restore("interrupted")
                 cleanup_tmp(record.task_id, data_dir)
         for record in self.store.list_tasks(TaskStatus.queued):
             if not _upload_exists(record):
                 self.store.mark_error(record.task_id, ErrorDetail(code="missing_upload"))
+                observe_restore("missing_upload")
                 cleanup_tmp(record.task_id, data_dir)
         # WORKER_QUEUE_SIZE не применяется: после рестарта очередь может быть длиннее лимита.
         for record in self.store.list_queued_fifo():
             self._queue.put_nowait(record.task_id)
+            observe_restore("requeued")
 
     async def stop(self) -> None:
         if self._dispatcher is not None:
@@ -106,6 +110,10 @@ class TaskRunner:
                 str(dest),
             )
             await self._queue.put(task_id)
+            observe_submitted(
+                asr_model.value,
+                None if diarization_model is None else diarization_model.value,
+            )
             return record
 
     async def delete(self, task_id: str) -> None:

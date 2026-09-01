@@ -60,7 +60,7 @@ Docker: [Docker Compose](#docker-compose) (образы CPU или NVIDIA GPU).
 
 | Переменная                | Смысл                                                                                                                                                                                                                                                |
 | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `API_TOKEN`               | Bearer-ключ для всех маршрутов, кроме `/health`. Пустой = никто не пройдёт. Не путать с `HF_TOKEN`.                                                                                                                                                  |
+| `API_TOKEN`               | Bearer-ключ для всех маршрутов, кроме `/health` и `/metrics`. Пустой = никто не пройдёт. Не путать с `HF_TOKEN`.                                                                                                                             |
 | `HF_TOKEN`                | Токен Hugging Face: скачать PyAnnote, VAD для GigaAM longform и чекпоинт NeMo Sortformer.                                                                                                                                                            |
 | `HOST`                    | Интерфейс (`127.0.0.1` локально; в Docker — `0.0.0.0`).                                                                                                                                                                                              |
 | `PORT`                    | HTTP-порт (по умолчанию `8000`).                                                                                                                                                                                                                     |
@@ -71,6 +71,7 @@ Docker: [Docker Compose](#docker-compose) (образы CPU или NVIDIA GPU).
 | `PERFORMANCE_LOG`         | CSV метрик инференса (по умолчанию `./data/logs/performance_log.csv`).                                                                                                                                                                               |
 | `LOG_ENABLED`             | Прикладной лог-файл + app-logger. По умолчанию `true`. `false` / `0` / `no` — выкл. Не трогает CSV / `metric_event`.                                                                                                                                 |
 | `PERFORMANCE_LOG_ENABLED` | Строка CSV + JSON `metric_event` в stdout при завершении задачи. По умолчанию `true`. `false` / `0` / `no` — выкл. Не трогает прикладные логи.                                                                                                       |
+| `METRICS_ENABLED`         | Прикладные метрики Prometheus на `GET /metrics`. По умолчанию `true`. `false` / `0` / `no` — только process collectors; endpoint остаётся.                                                                                                           |
 | `WHISPER_MODEL`           | Имя Faster-Whisper (по умолчанию `large-v3-turbo`).                                                                                                                                                                                                  |
 | `GIGAAM_MODEL`            | Имя для `gigaam.load_model` (по умолчанию `multilingual_large_ctc`).                                                                                                                                                                                 |
 | `PYANNOTE_MODEL`          | Id пайплайна PyAnnote (по умолчанию `pyannote/speaker-diarization-3.1`).                                                                                                                                                                             |
@@ -96,7 +97,7 @@ Docker: [Docker Compose](#docker-compose) (образы CPU или NVIDIA GPU).
 
 ## API
 
-Все маршруты, кроме `GET /health`, требуют:
+Все маршруты, кроме `GET /health` и `GET /metrics`, требуют:
 
 `Authorization: Bearer <API_TOKEN>`
 
@@ -109,6 +110,14 @@ curl -s "$HOST/health"
 ```
 
 В JSON — `version` (как в `version.txt`) и какие движки `loaded`, `unavailable` или `disabled` (без секретов). `disabled` — семейство не входило в `PRELOAD_ASR` / `PRELOAD_DIARIZATION`. Поле `device` — `cpu` или `cuda`.
+
+### Метрики (без токена)
+
+```bash
+curl -s "$HOST/metrics"
+```
+
+Текст Prometheus. Process collectors и прикладные gauges/counters/histograms (очередь, движки, тайминги задач). Без авторизации.
 
 ### Постановка файла → 202
 

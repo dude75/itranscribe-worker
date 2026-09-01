@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     PERFORMANCE_LOG: str = "./data/logs/performance_log.csv"
     LOG_ENABLED: bool = True
     PERFORMANCE_LOG_ENABLED: bool = True
+    METRICS_ENABLED: bool = True
 
     WHISPER_MODEL: str = "large-v3-turbo"
     GIGAAM_MODEL: str = "multilingual_large_ctc"

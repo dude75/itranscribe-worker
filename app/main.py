@@ -4,20 +4,30 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Query, UploadFile, status
+from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from app.auth import require_api_token
 from app.config import get_settings
 from app.engines.cache import get_cache
 from app.logging_setup import setup_logging
+from app.prometheus_metrics import (
+    CONTENT_TYPE,
+    create_metrics,
+    http_path_template,
+    observe_http,
+    observe_queue_rejected,
+    render,
+    set_active,
+)
 from app.queueing import QueueFullError, TaskRunner, TaskRunningError
 from app.schemas import (
     AsrModel,
@@ -42,6 +52,9 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     setup_logging(settings)
     logging.getLogger("app").info("service start")
+    metrics = create_metrics(settings)
+    set_active(metrics)
+    app.state.metrics = metrics
     cache = get_cache()
     import app.pipeline as pipeline
     from app.engines.stubs import StubASR, StubDiarization
@@ -56,15 +69,30 @@ async def lifespan(app: FastAPI):
         pipeline.resolve_diarization = cache.resolve_diarization
     runner = TaskRunner(settings)
     await runner.start()
+    metrics.bind(settings=settings, cache=cache, runner=runner)
     app.state.runner = runner
     app.state.engines = cache
     try:
         yield
     finally:
         await runner.stop()
+        set_active(None)
 
 
 app = FastAPI(title="itranscribe-worcker", version=read_version(), lifespan=lifespan)
+
+
+@app.middleware("http")
+async def prometheus_http_middleware(request: Request, call_next):
+    started = time.perf_counter()
+    path = http_path_template(request)
+    status_code = 500
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+        return response
+    finally:
+        observe_http(request.method, path, status_code, time.perf_counter() - started)
 
 
 def get_runner() -> TaskRunner:
@@ -120,6 +148,11 @@ def health() -> HealthResponse:
     )
 
 
+@app.get("/metrics")
+def metrics() -> Response:
+    return Response(content=render(), media_type=CONTENT_TYPE)
+
+
 @app.post("/transcribe", status_code=status.HTTP_202_ACCEPTED, response_model=TaskResponse)
 async def transcribe(
     file: UploadFile,
@@ -142,6 +175,7 @@ async def transcribe(
     try:
         record = await runner.submit(scratch, asr_model, diarization_model)
     except QueueFullError:
+        observe_queue_rejected()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"status": "error", "error": {"code": "queue_full"}},

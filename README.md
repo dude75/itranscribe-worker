@@ -60,7 +60,7 @@ Copy names into `.env`. **Do not put real tokens in git or in this README.** Cha
 
 | Variable                  | Meaning                                                                                                                                                                                                                                     |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `API_TOKEN`               | Bearer key for all routes except `/health`. Empty = nobody is authorized. Not the same as `HF_TOKEN`.                                                                                                                                       |
+| `API_TOKEN`               | Bearer key for all routes except `/health` and `/metrics`. Empty = nobody is authorized. Not the same as `HF_TOKEN`.                                                                                                                        |
 | `HF_TOKEN`                | Hugging Face token: download PyAnnote, VAD used by GigaAM longform, and the NeMo Sortformer checkpoint.                                                                                                                                     |
 | `HOST`                    | Bind address (`127.0.0.1` locally; Docker uses `0.0.0.0`).                                                                                                                                                                                  |
 | `PORT`                    | HTTP port (default `8000`).                                                                                                                                                                                                                 |
@@ -71,6 +71,7 @@ Copy names into `.env`. **Do not put real tokens in git or in this README.** Cha
 | `PERFORMANCE_LOG`         | Inference metrics CSV (default `./data/logs/performance_log.csv`).                                                                                                                                                                          |
 | `LOG_ENABLED`             | Application file log + app logger. Default `true`. `false` / `0` / `no` = off. Does not affect CSV / `metric_event`.                                                                                                                        |
 | `PERFORMANCE_LOG_ENABLED` | CSV row + JSON `metric_event` on stdout when a task finishes. Default `true`. `false` / `0` / `no` = off. Does not affect app logs.                                                                                                         |
+| `METRICS_ENABLED`         | Application Prometheus metrics on `GET /metrics`. Default `true`. `false` / `0` / `no` = process collectors only; the endpoint stays up.                                                                                                    |
 | `WHISPER_MODEL`           | Faster-Whisper checkpoint name (default `large-v3-turbo`).                                                                                                                                                                                  |
 | `GIGAAM_MODEL`            | `gigaam.load_model` name (default `multilingual_large_ctc`).                                                                                                                                                                                |
 | `PYANNOTE_MODEL`          | PyAnnote pipeline id (default `pyannote/speaker-diarization-3.1`).                                                                                                                                                                          |
@@ -96,7 +97,7 @@ After a process restart (or `docker compose restart`) unfinished work is restore
 
 ## API
 
-All routes except `GET /health` require:
+All routes except `GET /health` and `GET /metrics` require:
 
 `Authorization: Bearer <API_TOKEN>`
 
@@ -109,6 +110,14 @@ curl -s "$HOST/health"
 ```
 
 JSON includes `version` (same as `version.txt`), which engines are `loaded`, `unavailable`, or `disabled` (no secrets). `disabled` means the family was left out of `PRELOAD_ASR` / `PRELOAD_DIARIZATION`. `device` is `cpu` or `cuda`.
+
+### Metrics (no token)
+
+```bash
+curl -s "$HOST/metrics"
+```
+
+Prometheus text format. Process collectors plus application gauges/counters/histograms (queue, engines, task timings). Not authenticated.
 
 ### Submit a file → 202
 

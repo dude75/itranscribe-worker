@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from pathlib import Path
 
 from app.audio import infer_device
@@ -67,6 +68,7 @@ class EngineCache:
         )
 
         if "whisper" in asr_wanted:
+            t0 = time.perf_counter()
             try:
                 self._asr[AsrModel.whisper] = FasterWhisperASR(
                     settings.WHISPER_MODEL, models_dir, device=device, compute_type=dtype
@@ -76,11 +78,14 @@ class EngineCache:
                 log.warning("whisper preload failed: %s", type(exc).__name__)
                 self._asr[AsrModel.whisper] = None
                 self.status["whisper"] = EngineStatus.unavailable
+            finally:
+                _observe_preload("whisper", t0)
         else:
             self._asr[AsrModel.whisper] = None
             self.status["whisper"] = EngineStatus.disabled
 
         if "gigaam" in asr_wanted:
+            t0 = time.perf_counter()
             try:
                 self._asr[AsrModel.gigaam] = GigaAMASR(
                     settings.GIGAAM_MODEL,
@@ -93,11 +98,14 @@ class EngineCache:
                 log.warning("gigaam preload failed: %s", type(exc).__name__)
                 self._asr[AsrModel.gigaam] = None
                 self.status["gigaam"] = EngineStatus.unavailable
+            finally:
+                _observe_preload("gigaam", t0)
         else:
             self._asr[AsrModel.gigaam] = None
             self.status["gigaam"] = EngineStatus.disabled
 
         if "nemo" in diar_wanted:
+            t0 = time.perf_counter()
             try:
                 self._diar[DiarizationModel.nemo] = NemoSortformerDiarizer(
                     settings.NEMO_MODEL,
@@ -110,11 +118,14 @@ class EngineCache:
                 log.warning("nemo preload failed: %s: %s", type(exc).__name__, exc)
                 self._diar[DiarizationModel.nemo] = None
                 self.status["nemo"] = EngineStatus.unavailable
+            finally:
+                _observe_preload("nemo", t0)
         else:
             self._diar[DiarizationModel.nemo] = None
             self.status["nemo"] = EngineStatus.disabled
 
         if "pyannote" in diar_wanted:
+            t0 = time.perf_counter()
             try:
                 self._diar[DiarizationModel.pyannote] = PyannoteDiarizer(
                     settings.PYANNOTE_MODEL,
@@ -127,6 +138,8 @@ class EngineCache:
                 log.warning("pyannote preload failed: %s", type(exc).__name__)
                 self._diar[DiarizationModel.pyannote] = None
                 self.status["pyannote"] = EngineStatus.unavailable
+            finally:
+                _observe_preload("pyannote", t0)
         else:
             self._diar[DiarizationModel.pyannote] = None
             self.status["pyannote"] = EngineStatus.disabled
@@ -155,3 +168,9 @@ _cache = EngineCache()
 
 def get_cache() -> EngineCache:
     return _cache
+
+
+def _observe_preload(engine: str, started: float) -> None:
+    from app.prometheus_metrics import observe_preload
+
+    observe_preload(engine, time.perf_counter() - started)

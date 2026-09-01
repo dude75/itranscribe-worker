@@ -4,5 +4,6 @@ python-multipart
 pydantic-settings
 soundfile
 python-dotenv
+prometheus_client
 pytest
 httpx

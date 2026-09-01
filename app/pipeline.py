@@ -12,6 +12,7 @@ from app.config import Settings
 from app.engines.base import ASREngine, DiarizationEngine
 from app.engines.stubs import StubASR, StubDiarization
 from app.metrics import MetricEvent, write_metric
+from app.prometheus_metrics import observe_task_finished, queue_wait_sec
 from app.schemas import AsrModel, DiarizationModel, ErrorDetail, TaskStatus, TranscriptLine
 from app.tasks import TaskStore
 
@@ -103,6 +104,7 @@ def run_pipeline(store: TaskStore, settings: Settings, task_id: str) -> None:
             rtf=rtf,
             transcript=transcript,
         )
+        cleanup_tmp(task_id, settings.DATA_DIR)
         write_metric(
             settings.PERFORMANCE_LOG,
             MetricEvent(
@@ -120,6 +122,17 @@ def run_pipeline(store: TaskStore, settings: Settings, task_id: str) -> None:
                 rtf=rtf,
                 status="success",
             ),
+        )
+        observe_task_finished(
+            asr_model=record.asr_model.value,
+            diarization_model=_diarization_label(record.diarization_model),
+            status="success",
+            audio_duration_sec=duration,
+            asr_time_sec=asr_time,
+            diarization_time_sec=diar_time,
+            total_time_sec=total_time,
+            rtf=rtf,
+            queue_wait=queue_wait_sec(record.timestamp),
         )
     except Exception as exc:
         total_time = time.perf_counter() - started
@@ -140,6 +153,7 @@ def run_pipeline(store: TaskStore, settings: Settings, task_id: str) -> None:
             total_time_sec=total_time,
             rtf=rtf,
         )
+        cleanup_tmp(task_id, settings.DATA_DIR)
         write_metric(
             settings.PERFORMANCE_LOG,
             MetricEvent(
@@ -157,6 +171,18 @@ def run_pipeline(store: TaskStore, settings: Settings, task_id: str) -> None:
                 rtf=rtf,
                 status="error",
             ),
+        )
+        observe_task_finished(
+            asr_model=record.asr_model.value,
+            diarization_model=_diarization_label(record.diarization_model),
+            status="error",
+            error_code=error.code,
+            audio_duration_sec=duration,
+            asr_time_sec=asr_time,
+            diarization_time_sec=diar_time,
+            total_time_sec=total_time,
+            rtf=rtf,
+            queue_wait=queue_wait_sec(record.timestamp),
         )
     finally:
         # Не трогаем tmp running/queued: после рестарта нужен upload. Чистим только финал.
