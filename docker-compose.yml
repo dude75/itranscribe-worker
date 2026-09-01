@@ -1,5 +1,6 @@
 services:
   itranscribe:
+    restart: always
     image: itranscribe-worker:cpu
     build:
       context: .
