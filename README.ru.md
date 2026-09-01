@@ -119,6 +119,19 @@ curl -s "$HOST/metrics"
 
 Текст Prometheus. Process collectors и прикладные gauges/counters/histograms (очередь, движки, тайминги задач). Без авторизации.
 
+Grafana: импорт [`grafana/dashboards/itranscribe-worker.json`](grafana/dashboards/itranscribe-worker.json) (Dashboards → New → Import), datasource — Prometheus, который скрейпит этот endpoint. Пример scrape:
+
+```yaml
+scrape_configs:
+  - job_name: itranscribe-worker
+    metrics_path: /metrics
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["127.0.0.1:8000"]
+```
+
+Дашборд: очередь, движки, пайплайн/RTF, HTTP, процесс/диск. Задачи только с ASR идут с `diarization_model="none"`. HTTP-панели без scrape `/metrics`. CSV `PERFORMANCE_LOG` сюда не входит.
+
 ### Постановка файла → 202
 
 ```bash

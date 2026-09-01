@@ -119,6 +119,19 @@ curl -s "$HOST/metrics"
 
 Prometheus text format. Process collectors plus application gauges/counters/histograms (queue, engines, task timings). Not authenticated.
 
+Grafana: import [`grafana/dashboards/itranscribe-worker.json`](grafana/dashboards/itranscribe-worker.json) (Dashboards → New → Import) and pick the Prometheus that scrapes this endpoint. Example scrape:
+
+```yaml
+scrape_configs:
+  - job_name: itranscribe-worker
+    metrics_path: /metrics
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["127.0.0.1:8000"]
+```
+
+The dashboard covers queue, engines, pipeline/RTF, HTTP, and process/disk. ASR-only tasks use `diarization_model="none"`. HTTP panels exclude `/metrics` scrapes. CSV `PERFORMANCE_LOG` is separate and is not on this dashboard.
+
 ### Submit a file → 202
 
 ```bash
