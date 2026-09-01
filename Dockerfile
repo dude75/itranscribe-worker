@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-FROM nvidia/cuda:12.6.3-cudnn-runtime-ubuntu24.04 AS gpu-base
+FROM nvidia/cuda:12.9.2-cudnn-runtime-ubuntu24.04 AS gpu-base
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 \
         python3-venv \

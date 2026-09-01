@@ -13,7 +13,7 @@ services:
       args:
         TARGET: gpu
         DEVICE: cuda
-        TORCH_INDEX_URL: https://download.pytorch.org/whl/cu126
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cu129
     environment:
       DEVICE: cuda
       CUDA_VISIBLE_DEVICES: "0"
