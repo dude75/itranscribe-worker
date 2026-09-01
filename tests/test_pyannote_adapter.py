@@ -10,13 +10,58 @@ import soundfile as sf
 
 from app.audio import infer_device
 from app.config import get_settings
-from app.engines.diarization.pyannote import PyannoteDiarizer
+from app.engines.diarization.pyannote import PyannoteDiarizer, move_pipeline_to_device
 
 
 def test_pyannote_requires_token() -> None:
     settings = get_settings()
     with pytest.raises(RuntimeError, match="HF_TOKEN"):
         PyannoteDiarizer(settings.PYANNOTE_MODEL, settings.MODELS_DIR, hf_token="")
+
+
+class _FakePipeline:
+    def __init__(self, device: str = "cpu") -> None:
+        import torch
+
+        self.device = torch.device(device)
+
+    def to(self, device):
+        self.device = device
+        return self
+
+
+def test_move_pipeline_to_requested_device() -> None:
+    import torch
+
+    pipeline = _FakePipeline("cpu")
+    moved = move_pipeline_to_device(pipeline, "cpu")
+    assert moved is pipeline
+    assert moved.device == torch.device("cpu")
+
+
+def test_move_pipeline_raises_when_to_fails() -> None:
+    class Broken:
+        def to(self, device):
+            raise RuntimeError("CUDA out of memory")
+
+    with pytest.raises(RuntimeError, match="failed to move pipeline"):
+        move_pipeline_to_device(Broken(), "cuda")
+
+
+def test_move_pipeline_raises_when_component_stays_on_cpu() -> None:
+    import torch
+
+    class Stuck:
+        def __init__(self) -> None:
+            self.device = torch.device("cpu")
+            self._embedding = type("Emb", (), {"device": torch.device("cpu")})()
+
+        def to(self, device):
+            self.device = device
+            return self
+
+    with pytest.raises(RuntimeError, match="components not on"):
+        move_pipeline_to_device(Stuck(), "cuda")
 
 
 def _two_speaker_wav(path: Path) -> Path:

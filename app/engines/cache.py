@@ -135,7 +135,7 @@ class EngineCache:
                 )
                 self.status["pyannote"] = EngineStatus.loaded
             except Exception as exc:
-                log.warning("pyannote preload failed: %s", type(exc).__name__)
+                log.warning("pyannote preload failed: %s: %s", type(exc).__name__, exc)
                 self._diar[DiarizationModel.pyannote] = None
                 self.status["pyannote"] = EngineStatus.unavailable
             finally:
