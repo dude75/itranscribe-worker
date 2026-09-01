@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import shutil
+import subprocess
 from pathlib import Path
 
 import numpy as np
 import pytest
 import soundfile as sf
 
-from app.config import get_settings
 from app.audio import (
+    FfmpegTimeout,
     audio_duration_sec,
     cleanup_all_tmp,
     cleanup_tmp,
@@ -17,6 +18,7 @@ from app.audio import (
     prepare_wav,
     tmp_dir,
 )
+from app.config import get_settings
 
 SR = 16000
 DURATION = 0.5
@@ -121,8 +123,6 @@ def test_cleanup_all_tmp_removes_leftovers(tmp_path: Path) -> None:
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg не установлен")
 def test_mp3_converts_to_wav(wav_file: Path, tmp_path: Path) -> None:
     mp3 = tmp_path / "sample.mp3"
-    import subprocess
-
     subprocess.run(
         ["ffmpeg", "-y", "-i", str(wav_file), str(mp3)],
         check=True,
@@ -142,8 +142,6 @@ def test_mp3_converts_to_wav(wav_file: Path, tmp_path: Path) -> None:
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg не установлен")
 def test_m4a_converts_to_wav(wav_file: Path, tmp_path: Path) -> None:
     m4a = tmp_path / "sample.m4a"
-    import subprocess
-
     subprocess.run(
         ["ffmpeg", "-y", "-i", str(wav_file), str(m4a)],
         check=True,
@@ -158,3 +156,119 @@ def test_m4a_converts_to_wav(wav_file: Path, tmp_path: Path) -> None:
     finally:
         cleanup_tmp(task_id, tmp_path)
     assert not tmp_dir(task_id, tmp_path).exists()
+
+
+class _FfmpegOk:
+    returncode = 0
+    stderr = ""
+
+
+def test_prepare_wav_ffmpeg_uses_nostdin_and_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mp3 = tmp_path / "sample.mp3"
+    mp3.write_bytes(b"x")
+    captured: dict[str, object] = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["kwargs"] = kwargs
+        return _FfmpegOk()
+
+    monkeypatch.setattr("app.audio.subprocess.run", fake_run)
+    task_id = "audio-ffmpeg-flags"
+    try:
+        prepare_wav(mp3, task_id, tmp_path, timeout_sec=42)
+    finally:
+        cleanup_tmp(task_id, tmp_path)
+
+    assert captured["cmd"][:3] == ["ffmpeg", "-nostdin", "-y"]
+    kwargs = captured["kwargs"]
+    assert kwargs["timeout"] == 42
+    assert kwargs["stdin"] is subprocess.DEVNULL
+    assert kwargs["start_new_session"] is True
+
+
+def test_prepare_wav_ffmpeg_timeout_zero_disables(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mp3 = tmp_path / "sample.mp3"
+    mp3.write_bytes(b"x")
+    captured: dict[str, object] = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["kwargs"] = kwargs
+        return _FfmpegOk()
+
+    monkeypatch.setattr("app.audio.subprocess.run", fake_run)
+    task_id = "audio-ffmpeg-no-timeout"
+    try:
+        prepare_wav(mp3, task_id, tmp_path, timeout_sec=0)
+    finally:
+        cleanup_tmp(task_id, tmp_path)
+
+    assert captured["kwargs"]["timeout"] is None
+
+
+def test_prepare_wav_ffmpeg_timeout_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mp3 = tmp_path / "sample.mp3"
+    mp3.write_bytes(b"x")
+
+    def fake_run(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=args[0], timeout=kwargs["timeout"])
+
+    monkeypatch.setattr("app.audio.subprocess.run", fake_run)
+    task_id = "audio-ffmpeg-timeout"
+    try:
+        with pytest.raises(FfmpegTimeout, match="timed out after 1"):
+            prepare_wav(mp3, task_id, tmp_path, timeout_sec=1)
+    finally:
+        cleanup_tmp(task_id, tmp_path)
+
+
+def test_pipeline_maps_ffmpeg_timeout_to_task_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.config import Settings
+    from app.pipeline import run_pipeline
+    from app.schemas import AsrModel, TaskStatus
+    from app.tasks import TaskStore
+
+    db = tmp_path / "tasks.db"
+    store = TaskStore(str(db))
+    settings = Settings(
+        DATA_DIR=str(tmp_path),
+        SQLITE_PATH=str(db),
+        LOG_DIR=str(tmp_path / "logs"),
+        PERFORMANCE_LOG=str(tmp_path / "logs" / "performance_log.csv"),
+        FFMPEG_TIMEOUT_SEC=5,
+        _env_file=None,
+    )
+    upload = tmp_path / "clip.mp3"
+    upload.write_bytes(b"x")
+    store.create(
+        "ffmpeg-timeout-task",
+        AsrModel.whisper,
+        None,
+        settings.WHISPER_MODEL,
+        None,
+        str(upload),
+    )
+
+    def boom(*_args, **_kwargs):
+        raise FfmpegTimeout("ffmpeg timed out after 5s")
+
+    monkeypatch.setattr("app.pipeline.prepare_wav", boom)
+    try:
+        run_pipeline(store, settings, "ffmpeg-timeout-task")
+        done = store.get("ffmpeg-timeout-task")
+        assert done is not None
+        assert done.status is TaskStatus.error
+        assert done.error is not None
+        assert done.error["code"] == "ffmpeg_timeout"
+        assert done.error["message"] == "ffmpeg timed out after 5s"
+    finally:
+        store.close()

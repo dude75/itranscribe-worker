@@ -82,6 +82,7 @@ Copy names into `.env`. **Do not put real tokens in git or in this README.** Cha
 | `WORKERS`                 | How many **tasks** may run at once in this process. Default `1`. Not uvicorn workers; weights are shared.                                                                                                                                   |
 | `WORKER_QUEUE_SIZE`       | Max `queued` tasks waiting for a slot. Default `4`. Beyond that: `503` `queue_full`.                                                                                                                                                        |
 | `TASK_TTL_SEC`            | Seconds after `success`/`error` before the SQLite row is deleted. `0` = no TTL (delete only via `DELETE`).                                                                                                                                  |
+| `FFMPEG_TIMEOUT_SEC`      | Seconds allowed for ffmpeg when converting MP3/M4A → WAV. Default `120`. On timeout the task becomes `error` with `ffmpeg_timeout` and the ffmpeg process is killed. `0` = no limit.                                                        |
 
 
 Everything that must survive a restart lives under `./data` (models, `tasks.db`, logs, **and queue tmp** `{DATA_DIR}/tmp/`). Mount that directory in Docker.
@@ -263,6 +264,7 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml down
 | HTTP **200**, `status=error`, `error.code = engine_unavailable` | Requested family is `unavailable` or `disabled` in `/health`. Switch `asr_model` / `diarization_model`, or change preload and restart.    |
 | HTTP **200**, `status=error`, `error.code = missing_upload`     | Upload file for a queued/restored task is gone from `{DATA_DIR}/tmp/`.                                                                    |
 | HTTP **200**, `status=error`, `error.code = interrupted`        | Process died while the task was `running` and the upload file was missing after restart.                                                  |
+| HTTP **200**, `status=error`, `error.code = ffmpeg_timeout`     | ffmpeg did not finish converting MP3/M4A within `FFMPEG_TIMEOUT_SEC`. The converter process is killed; the worker slot is freed.          |
 | HTTP **422**                                                    | Invalid `asr_model` / `diarization_model` (`whisper`/`gigaam`; `nemo`/`pyannote`). Empty `diarization_model` is valid (skip diarization). |
 
 

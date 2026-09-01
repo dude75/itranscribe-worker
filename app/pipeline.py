@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 
 from app.alignment import align, utterances_from_words
-from app.audio import audio_duration_sec, cleanup_tmp, infer_device, prepare_wav
+from app.audio import FfmpegTimeout, audio_duration_sec, cleanup_tmp, infer_device, prepare_wav
 from app.config import Settings
 from app.engines.base import ASREngine, DiarizationEngine
 from app.engines.stubs import StubASR, StubDiarization
@@ -62,7 +62,15 @@ def run_pipeline(store: TaskStore, settings: Settings, task_id: str) -> None:
         upload = Path(record.upload_path) if record.upload_path else None
         if upload is None or not upload.is_file():
             raise TaskFailed("missing_upload")
-        wav = prepare_wav(record.upload_path, task_id, settings.DATA_DIR)
+        try:
+            wav = prepare_wav(
+                record.upload_path,
+                task_id,
+                settings.DATA_DIR,
+                timeout_sec=settings.FFMPEG_TIMEOUT_SEC,
+            )
+        except FfmpegTimeout as exc:
+            raise TaskFailed("ffmpeg_timeout", str(exc)) from exc
         duration = audio_duration_sec(wav)
         if duration <= 0:
             raise TaskFailed("zero_duration", "audio duration is zero")

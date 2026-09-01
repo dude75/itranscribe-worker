@@ -128,11 +128,29 @@ def audio_duration_sec(wav_path: str | Path) -> float:
     return float(info.duration)
 
 
-def _run_ffmpeg(src: Path, dst: Path) -> None:
+class FfmpegTimeout(RuntimeError):
+    """ffmpeg не уложился в FFMPEG_TIMEOUT_SEC."""
+
+
+def _ffmpeg_timeout_sec(explicit: float | int | None) -> float | None:
+    if explicit is None:
+        from app.config import get_settings
+
+        value = float(get_settings().FFMPEG_TIMEOUT_SEC)
+    else:
+        value = float(explicit)
+    if value <= 0:
+        return None
+    return value
+
+
+def _run_ffmpeg(src: Path, dst: Path, timeout_sec: float | int | None) -> None:
+    timeout = _ffmpeg_timeout_sec(timeout_sec)
     try:
         completed = subprocess.run(
             [
                 "ffmpeg",
+                "-nostdin",
                 "-y",
                 "-i",
                 str(src),
@@ -145,9 +163,14 @@ def _run_ffmpeg(src: Path, dst: Path) -> None:
             check=False,
             capture_output=True,
             text=True,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+            timeout=timeout,
         )
     except FileNotFoundError as exc:
         raise RuntimeError("ffmpeg не найден") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise FfmpegTimeout(f"ffmpeg timed out after {timeout}s") from exc
     if completed.returncode != 0:
         raise RuntimeError(completed.stderr.strip() or "ffmpeg failed")
 
@@ -155,7 +178,12 @@ def _run_ffmpeg(src: Path, dst: Path) -> None:
 CONVERT_SUFFIXES = {".mp3", ".m4a"}
 
 
-def prepare_wav(src: str | Path, task_id: str, data_dir: str | Path | None = None) -> Path:
+def prepare_wav(
+    src: str | Path,
+    task_id: str,
+    data_dir: str | Path | None = None,
+    timeout_sec: float | int | None = None,
+) -> Path:
     """Кладёт WAV в {DATA_DIR}/tmp/<task_id>/audio.wav. MP3/M4A конвертирует через ffmpeg."""
     src_path = Path(src)
     dest_dir = create_tmp(task_id, data_dir)
@@ -165,6 +193,6 @@ def prepare_wav(src: str | Path, task_id: str, data_dir: str | Path | None = Non
         shutil.copy2(src_path, dest)
         return dest
     if suffix in CONVERT_SUFFIXES:
-        _run_ffmpeg(src_path, dest)
+        _run_ffmpeg(src_path, dest, timeout_sec)
         return dest
     raise ValueError(f"unsupported audio format: {suffix}")

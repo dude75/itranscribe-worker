@@ -24,6 +24,7 @@ def test_preload_defaults_all() -> None:
     assert settings.PRELOAD_ASR == "all"
     assert settings.PRELOAD_DIARIZATION == "all"
     assert settings.DEVICE == "auto"
+    assert settings.FFMPEG_TIMEOUT_SEC == 120
     assert settings.asr_families_to_preload() == ("whisper", "gigaam")
     assert settings.diarization_families_to_preload() == ("nemo", "pyannote")
 

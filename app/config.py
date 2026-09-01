@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     WORKERS: int = 1
     WORKER_QUEUE_SIZE: int = 4
     TASK_TTL_SEC: int = 3600
+    FFMPEG_TIMEOUT_SEC: int = 120
 
     @field_validator("PRELOAD_ASR", "PRELOAD_DIARIZATION", "DEVICE", mode="before")
     @classmethod

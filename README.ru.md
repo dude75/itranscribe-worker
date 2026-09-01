@@ -82,6 +82,7 @@ Docker: [Docker Compose](#docker-compose) (образы CPU или NVIDIA GPU).
 | `WORKERS`                 | Сколько **задач** можно считать сразу в этом процессе. По умолчанию `1`. Это не воркеры uvicorn; веса общие.                                                                                                                                         |
 | `WORKER_QUEUE_SIZE`       | Сколько задач может висеть в `queued`. По умолчанию `4`. Сверх лимита: `503` `queue_full`.                                                                                                                                                           |
 | `TASK_TTL_SEC`            | Через сколько секунд после `success`/`error` удалить строку из SQLite. `0` — не удалять по TTL (только `DELETE`).                                                                                                                                    |
+| `FFMPEG_TIMEOUT_SEC`      | Сколько секунд дать ffmpeg на конвертацию MP3/M4A → WAV. По умолчанию `120`. По таймауту задача уходит в `error` с кодом `ffmpeg_timeout`, процесс ffmpeg убивается. `0` — без лимита.                                                               |
 
 
 Всё, что должно пережить рестарт, лежит в `./data` (модели, `tasks.db`, логи **и tmp очереди** `{DATA_DIR}/tmp/`). В Docker монтируйте этот каталог.
@@ -263,6 +264,7 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml down
 | HTTP **200**, `status=error`, `error.code = engine_unavailable` | Запрошенное семейство `unavailable` или `disabled` в `/health`. Смените `asr_model` / `diarization_model` или поменяйте preload и перезапустите. |
 | HTTP **200**, `status=error`, `error.code = missing_upload`     | Upload-файл queued/восстановленной задачи пропал из `{DATA_DIR}/tmp/`.                                                                           |
 | HTTP **200**, `status=error`, `error.code = interrupted`        | Процесс умер, пока задача была `running`, и после рестарта файла не оказалось.                                                                   |
+| HTTP **200**, `status=error`, `error.code = ffmpeg_timeout`     | ffmpeg не успел конвертировать MP3/M4A за `FFMPEG_TIMEOUT_SEC`. Процесс конвертера убивается, слот воркера освобождается.                         |
 | HTTP **422**                                                    | Неверный `asr_model` / `diarization_model` (`whisper`/`gigaam`; `nemo`/`pyannote`). Пустой `diarization_model` допустим (без диаризации).        |
 
 
