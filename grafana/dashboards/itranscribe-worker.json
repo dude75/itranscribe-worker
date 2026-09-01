@@ -198,14 +198,17 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "description": "Share of finished tasks with status=success over the selected time range. Shows n/a until Prometheus has scraped itranscribe_tasks_completed_total (created on the first completed task).",
       "fieldConfig": {
         "defaults": {
           "max": 1,
           "min": 0,
+          "noValue": "n/a",
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "red", "value": null },
+              { "color": "text", "value": null },
+              { "color": "red", "value": 0 },
               { "color": "orange", "value": 0.9 },
               { "color": "green", "value": 0.99 }
             ]
@@ -227,7 +230,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum(rate(itranscribe_tasks_completed_total{job=~\"$job\", instance=~\"$instance\", status=\"success\"}[$__rate_interval])) / clamp_min(sum(rate(itranscribe_tasks_completed_total{job=~\"$job\", instance=~\"$instance\"}[$__rate_interval])), 1e-9)",
+          "expr": "sum(increase(itranscribe_tasks_completed_total{job=~\"$job\", instance=~\"$instance\", status=\"success\"}[$__range])) / clamp_min(sum(increase(itranscribe_tasks_completed_total{job=~\"$job\", instance=~\"$instance\"}[$__range])), 1)",
           "instant": true,
           "refId": "A"
         }
