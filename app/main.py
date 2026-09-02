@@ -83,7 +83,7 @@ async def lifespan(app: FastAPI):
         set_active(None)
 
 
-app = FastAPI(title="itranscribe-worcker", version=read_version(), lifespan=lifespan)
+app = FastAPI(title="itranscribe-worker", version=read_version(), lifespan=lifespan)
 
 
 def _api_error(status_code: int, code: ErrorCode) -> JSONResponse:

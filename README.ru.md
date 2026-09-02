@@ -221,7 +221,7 @@ JSON **200**:
 
 ## Docker Compose
 
-Два образа из одного `Dockerfile`: **CPU** (`itranscribe-worcker:cpu`) и **NVIDIA GPU** (`itranscribe-worcker:gpu`). Compose сам ставит `DEVICE` (`cpu` / `cuda`). Не поднимайте оба стека на порту `8000` одновременно.
+Два образа из одного `Dockerfile`: **CPU** (`itranscribe-worker:cpu`) и **NVIDIA GPU** (`itranscribe-worker:gpu`). Compose сам ставит `DEVICE` (`cpu` / `cuda`). Не поднимайте оба стека на порту `8000` одновременно.
 
 ### Подготовка
 

@@ -221,7 +221,7 @@ JSON **200**:
 
 ## Docker Compose
 
-Two images from the same `Dockerfile`: **CPU** (`itranscribe-worcker:cpu`) and **NVIDIA GPU** (`itranscribe-worcker:gpu`). Compose sets `DEVICE` per image (`cpu` / `cuda`). Do not run both stacks on port `8000` at the same time.
+Two images from the same `Dockerfile`: **CPU** (`itranscribe-worker:cpu`) and **NVIDIA GPU** (`itranscribe-worker:gpu`). Compose sets `DEVICE` per image (`cpu` / `cuda`). Do not run both stacks on port `8000` at the same time.
 
 ### Prepare
 
