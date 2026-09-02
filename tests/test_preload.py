@@ -115,6 +115,30 @@ def test_preload_skips_constructors_and_marks_disabled(
     assert cache.resolve_diarization(DiarizationModel.nemo) is not None
 
 
+def test_preload_gigaam_unavailable_without_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("app.engines.cache.NemoSortformerDiarizer", _spy("nemo", []))
+    monkeypatch.setattr(
+        "app.engines.cache.infer_device", lambda *_args, **_kwargs: ("cpu", "float32")
+    )
+
+    settings = Settings(
+        PRELOAD_ASR="gigaam",
+        PRELOAD_DIARIZATION="nemo",
+        MODELS_DIR=str(tmp_path),
+        HF_TOKEN="",
+        _env_file=None,
+    )
+    cache = EngineCache()
+    cache.preload(settings)
+
+    assert cache.status["gigaam"] is EngineStatus.unavailable
+    with pytest.raises(TaskFailed) as exc:
+        cache.resolve_asr(AsrModel.gigaam)
+    assert exc.value.code == "engine_unavailable"
+
+
 def test_preload_all_constructs_every_family(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

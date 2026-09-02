@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
+import types
 from pathlib import Path
 
 import numpy as np
@@ -12,8 +14,52 @@ from app.audio import infer_device
 from app.config import get_settings
 from app.engines.asr.gigaam import GigaAMASR
 
-pytestmark = pytest.mark.ml
-pytest.importorskip("gigaam")
+
+def test_gigaam_requires_token() -> None:
+    settings = get_settings()
+    with pytest.raises(RuntimeError, match="HF_TOKEN"):
+        GigaAMASR(settings.GIGAAM_MODEL, settings.MODELS_DIR, hf_token="")
+
+
+def _fake_gigaam_modules(monkeypatch: pytest.MonkeyPatch, get_pipeline) -> None:
+    class FakeModel:
+        _device = "cpu"
+
+    fake = types.ModuleType("gigaam")
+    fake.load_model = lambda *args, **kwargs: FakeModel()
+    vad = types.ModuleType("gigaam.vad_utils")
+    vad.get_pipeline = get_pipeline
+    fake.vad_utils = vad
+    monkeypatch.setitem(sys.modules, "gigaam", fake)
+    monkeypatch.setitem(sys.modules, "gigaam.vad_utils", vad)
+
+
+def test_gigaam_constructor_warms_vad(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    warmed: list[object] = []
+
+    def get_pipeline(device):
+        warmed.append(device)
+        return object()
+
+    _fake_gigaam_modules(monkeypatch, get_pipeline)
+    GigaAMASR("multilingual_large_ctc", str(tmp_path), hf_token="token", device="cpu")
+    assert warmed == ["cpu"]
+
+
+def test_gigaam_constructor_fails_if_vad_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def get_pipeline(_device):
+        raise RuntimeError(
+            "Model pyannote/segmentation-3.0 was not found locally, "
+            "and no HF_TOKEN was provided to download it."
+        )
+
+    _fake_gigaam_modules(monkeypatch, get_pipeline)
+    with pytest.raises(RuntimeError, match="HF_TOKEN"):
+        GigaAMASR("multilingual_large_ctc", str(tmp_path), hf_token="token", device="cpu")
 
 
 def _speech_wav(path: Path, text: str = "привет мир") -> Path:
@@ -51,6 +97,7 @@ def gigaam_engine() -> GigaAMASR:
     )
 
 
+@pytest.mark.ml
 def test_gigaam_short_longform(gigaam_engine: GigaAMASR, tmp_path: Path) -> None:
     wav = _speech_wav(tmp_path / "giga_short.wav")
     words = gigaam_engine.words(str(wav))
@@ -58,6 +105,7 @@ def test_gigaam_short_longform(gigaam_engine: GigaAMASR, tmp_path: Path) -> None
     assert all(w.end >= w.start and w.text.strip() for w in words)
 
 
+@pytest.mark.ml
 def test_gigaam_long_file(gigaam_engine: GigaAMASR, tmp_path: Path) -> None:
     short = _speech_wav(tmp_path / "giga_piece.wav")
     long = _repeat_to_duration(short, tmp_path / "giga_long.wav", 26.0)
