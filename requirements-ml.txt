@@ -6,5 +6,5 @@ torch==2.10.0
 torchaudio==2.10.0
 faster-whisper==1.2.1
 pyannote.audio==4.0.7
-gigaam[longform] @ git+https://github.com/salute-developers/GigaAM.git@7447938d791c4f3e643386ee22c33777004293a5
+gigaam[longform] @ https://github.com/salute-developers/GigaAM/archive/7447938d791c4f3e643386ee22c33777004293a5.tar.gz
 nemo_toolkit[asr]==3.0.0
