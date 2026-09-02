@@ -91,7 +91,14 @@ def test_tmp_lives_under_data_dir_not_cwd(
         get_settings.cache_clear()
 
 
-def test_prepare_wav_copies_into_tmp(wav_file: Path, tmp_path: Path) -> None:
+def _assert_mono_16k(path: Path) -> None:
+    info = sf.info(str(path))
+    assert info.channels == 1
+    assert info.samplerate == SR
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg не установлен")
+def test_prepare_wav_normalizes_into_tmp(wav_file: Path, tmp_path: Path) -> None:
     task_id = "audio-wav-1"
     try:
         dest = prepare_wav(wav_file, task_id, tmp_path)
@@ -99,10 +106,32 @@ def test_prepare_wav_copies_into_tmp(wav_file: Path, tmp_path: Path) -> None:
         assert dest.parent == tmp_path / "tmp" / task_id
         assert dest.parent == tmp_dir(task_id, tmp_path)
         assert not (Path.cwd() / f"tmp_{task_id}").exists()
+        _assert_mono_16k(dest)
         assert audio_duration_sec(dest) == pytest.approx(DURATION, abs=1e-3)
     finally:
         cleanup_tmp(task_id, tmp_path)
     assert not tmp_dir(task_id, tmp_path).exists()
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg не установлен")
+def test_prepare_wav_downmixes_stereo(tmp_path: Path) -> None:
+    stereo_sr = 48000
+    stereo = tmp_path / "stereo.wav"
+    samples = np.stack(
+        [
+            np.full(int(stereo_sr * DURATION), 0.4, dtype=np.float32),
+            np.full(int(stereo_sr * DURATION), -0.4, dtype=np.float32),
+        ],
+        axis=1,
+    )
+    sf.write(stereo, samples, stereo_sr)
+    task_id = "audio-stereo-1"
+    try:
+        dest = prepare_wav(stereo, task_id, tmp_path)
+        _assert_mono_16k(dest)
+        assert audio_duration_sec(dest) == pytest.approx(DURATION, abs=0.05)
+    finally:
+        cleanup_tmp(task_id, tmp_path)
 
 
 def test_cleanup_tmp_after_success_or_error(tmp_path: Path) -> None:
@@ -137,6 +166,7 @@ def test_mp3_converts_to_wav(wav_file: Path, tmp_path: Path) -> None:
         dest = prepare_wav(mp3, task_id, tmp_path)
         assert dest.suffix == ".wav"
         assert dest.parent == tmp_path / "tmp" / task_id
+        _assert_mono_16k(dest)
         assert audio_duration_sec(dest) == pytest.approx(DURATION, abs=0.05)
     finally:
         cleanup_tmp(task_id, tmp_path)
@@ -156,6 +186,7 @@ def test_m4a_converts_to_wav(wav_file: Path, tmp_path: Path) -> None:
         dest = prepare_wav(m4a, task_id, tmp_path)
         assert dest.suffix == ".wav"
         assert dest.parent == tmp_path / "tmp" / task_id
+        _assert_mono_16k(dest)
         assert audio_duration_sec(dest) == pytest.approx(DURATION, abs=0.05)
     finally:
         cleanup_tmp(task_id, tmp_path)
@@ -170,8 +201,8 @@ class _FfmpegOk:
 def test_prepare_wav_ffmpeg_uses_nostdin_and_timeout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    mp3 = tmp_path / "sample.mp3"
-    mp3.write_bytes(b"x")
+    wav = tmp_path / "sample.wav"
+    wav.write_bytes(b"x")
     captured: dict[str, object] = {}
 
     def fake_run(cmd, **kwargs):
@@ -182,11 +213,14 @@ def test_prepare_wav_ffmpeg_uses_nostdin_and_timeout(
     monkeypatch.setattr("app.audio.subprocess.run", fake_run)
     task_id = "audio-ffmpeg-flags"
     try:
-        prepare_wav(mp3, task_id, tmp_path, timeout_sec=42)
+        prepare_wav(wav, task_id, tmp_path, timeout_sec=42)
     finally:
         cleanup_tmp(task_id, tmp_path)
 
-    assert captured["cmd"][:3] == ["ffmpeg", "-nostdin", "-y"]
+    cmd = captured["cmd"]
+    assert cmd[:3] == ["ffmpeg", "-nostdin", "-y"]
+    assert "-ac" in cmd and cmd[cmd.index("-ac") + 1] == "1"
+    assert "-ar" in cmd and cmd[cmd.index("-ar") + 1] == "16000"
     kwargs = captured["kwargs"]
     assert kwargs["timeout"] == 42
     assert kwargs["stdin"] is subprocess.DEVNULL

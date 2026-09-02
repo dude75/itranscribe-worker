@@ -20,7 +20,7 @@ On-premise **ASR + optional speaker diarization** HTTP service. Submit an audio 
 
 - Python **3.12**
 - Virtualenv at `.venv` (use `./.venv/bin/python` and `./.venv/bin/pip` only)
-- **ffmpeg** on `PATH` (MP3/M4A → WAV, GigaAM longform)
+- **ffmpeg** on `PATH` (all uploads → mono 16 kHz WAV, GigaAM longform)
 - Hugging Face account + **accepted licenses** for PyAnnote 3.1 (`pyannote/speaker-diarization-3.1` and its dependencies). Set `HF_TOKEN` in `.env` (the same token downloads Sortformer from Hugging Face). Without a token/license, PyAnnote is unavailable.
 - Disk under `./data` for model weights, SQLite, logs, and the task queue tmp (not committed)
 
@@ -83,7 +83,7 @@ Copy names into `.env`. **Do not put real tokens in git or in this README.** Cha
 | `WORKER_QUEUE_SIZE`       | Max `queued` tasks waiting for a slot. Default `4`. Beyond that: `503` `queue_full`.                                                                                                                                                        |
 | `MAX_UPLOAD_BYTES`        | Max `POST /transcribe` body in bytes (`Content-Length` and streamed file bytes). Default `1073741824` (1 GiB). Over the limit: HTTP **413** `payload_too_large`.                                                                            |
 | `TASK_TTL_SEC`            | Seconds after `success`/`error` before the SQLite row is deleted. `0` = no TTL (delete only via `DELETE`).                                                                                                                                  |
-| `FFMPEG_TIMEOUT_SEC`      | Seconds allowed for ffmpeg when converting MP3/M4A → WAV. Default `120`. On timeout the task becomes `error` with `ffmpeg_timeout` and the ffmpeg process is killed. `0` = no limit.                                                        |
+| `FFMPEG_TIMEOUT_SEC`      | Seconds allowed for ffmpeg when normalizing any upload (WAV/MP3/M4A) to mono 16 kHz WAV. Default `120`. On timeout the task becomes `error` with `ffmpeg_timeout` and the ffmpeg process is killed. `0` = no limit.                          |
 | `TASK_MAX_RESTARTS`       | How many times a task found `running` after a process death may be put back in `queued`. Default `1` (one retry). After that: `error` with `process_killed`. `0` = fail on the first restore. CUDA OOM is a caught Python exception (`pipeline_error`) and does not count. |
 
 
@@ -268,7 +268,7 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml down
 | HTTP **200**, `status=error`, `error.code = missing_upload`     | Upload file for a queued/restored task is gone from `{DATA_DIR}/tmp/`.                                                                    |
 | HTTP **200**, `status=error`, `error.code = interrupted`        | Process died while the task was `running` and the upload file was missing after restart.                                                  |
 | HTTP **200**, `status=error`, `error.code = process_killed`     | Process died while the task was `running` more times than `TASK_MAX_RESTARTS` (kernel OOM-kill / native segfault). The worker stays up. CUDA OOM is `pipeline_error`. |
-| HTTP **200**, `status=error`, `error.code = ffmpeg_timeout`     | ffmpeg did not finish converting MP3/M4A within `FFMPEG_TIMEOUT_SEC`. The converter process is killed; the worker slot is freed.          |
+| HTTP **200**, `status=error`, `error.code = ffmpeg_timeout`     | ffmpeg did not finish normalizing the upload to mono 16 kHz WAV within `FFMPEG_TIMEOUT_SEC`. The converter process is killed; the worker slot is freed. |
 | HTTP **422**                                                    | Invalid `asr_model` / `diarization_model` (`whisper`/`gigaam`; `nemo`/`pyannote`). Empty `diarization_model` is valid (skip diarization). |
 
 

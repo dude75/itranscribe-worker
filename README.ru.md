@@ -20,7 +20,7 @@
 
 - Python **3.12**
 - Виртуальное окружение `.venv` (только `./.venv/bin/python` и `./.venv/bin/pip`)
-- **ffmpeg** в `PATH` (MP3/M4A → WAV, GigaAM longform)
+- **ffmpeg** в `PATH` (все загрузки → моно 16 кГц WAV, GigaAM longform)
 - Аккаунт Hugging Face и **принятые лицензии** PyAnnote 3.1 (`pyannote/speaker-diarization-3.1` и зависимости). В `.env` нужен `HF_TOKEN` (им же качается Sortformer с Hugging Face). Без токена/лицензии PyAnnote недоступен.
 - Диск под `./data` для весов, SQLite, логов и tmp очереди задач (в git не коммитится)
 
@@ -83,7 +83,7 @@ Docker: [Docker Compose](#docker-compose) (образы CPU или NVIDIA GPU).
 | `WORKER_QUEUE_SIZE`       | Сколько задач может висеть в `queued`. По умолчанию `4`. Сверх лимита: `503` `queue_full`.                                                                                                                                                           |
 | `MAX_UPLOAD_BYTES`        | Максимум тела `POST /transcribe` в байтах (`Content-Length` и стрим файла). По умолчанию `1073741824` (1 GiB). Сверх лимита: HTTP **413** `payload_too_large`.                                                                                        |
 | `TASK_TTL_SEC`            | Через сколько секунд после `success`/`error` удалить строку из SQLite. `0` — не удалять по TTL (только `DELETE`).                                                                                                                                    |
-| `FFMPEG_TIMEOUT_SEC`      | Сколько секунд дать ffmpeg на конвертацию MP3/M4A → WAV. По умолчанию `120`. По таймауту задача уходит в `error` с кодом `ffmpeg_timeout`, процесс ffmpeg убивается. `0` — без лимита.                                                               |
+| `FFMPEG_TIMEOUT_SEC`      | Сколько секунд дать ffmpeg на нормализацию любой загрузки (WAV/MP3/M4A) в моно 16 кГц WAV. По умолчанию `120`. По таймауту задача уходит в `error` с кодом `ffmpeg_timeout`, процесс ffmpeg убивается. `0` — без лимита.                               |
 | `TASK_MAX_RESTARTS`       | Сколько раз задачу, найденную в `running` после смерти процесса, вернуть в `queued`. По умолчанию `1` (одна повторная попытка). Дальше — `error` с кодом `process_killed`. `0` — сразу ошибка при первом restore. CUDA OOM — обычное Python-исключение (`pipeline_error`), в этот счётчик не входит. |
 
 
@@ -268,7 +268,7 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml down
 | HTTP **200**, `status=error`, `error.code = missing_upload`     | Upload-файл queued/восстановленной задачи пропал из `{DATA_DIR}/tmp/`.                                                                           |
 | HTTP **200**, `status=error`, `error.code = interrupted`        | Процесс умер, пока задача была `running`, и после рестарта файла не оказалось.                                                                   |
 | HTTP **200**, `status=error`, `error.code = process_killed`     | Процесс умер на `running` больше `TASK_MAX_RESTARTS` раз (kernel OOM-kill / нативный segfault). Воркер остаётся живым. CUDA OOM — это `pipeline_error`. |
-| HTTP **200**, `status=error`, `error.code = ffmpeg_timeout`     | ffmpeg не успел конвертировать MP3/M4A за `FFMPEG_TIMEOUT_SEC`. Процесс конвертера убивается, слот воркера освобождается.                         |
+| HTTP **200**, `status=error`, `error.code = ffmpeg_timeout`     | ffmpeg не успел нормализовать загрузку в моно 16 кГц WAV за `FFMPEG_TIMEOUT_SEC`. Процесс конвертера убивается, слот воркера освобождается.        |
 | HTTP **422**                                                    | Неверный `asr_model` / `diarization_model` (`whisper`/`gigaam`; `nemo`/`pyannote`). Пустой `diarization_model` допустим (без диаризации).        |
 
 

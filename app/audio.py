@@ -211,7 +211,7 @@ def _run_ffmpeg(src: Path, dst: Path, timeout_sec: float | int | None) -> None:
         raise RuntimeError(completed.stderr.strip() or "ffmpeg failed")
 
 
-CONVERT_SUFFIXES = {".mp3", ".m4a"}
+PREPARE_SUFFIXES = {".wav", ".mp3", ".m4a"}
 
 
 def prepare_wav(
@@ -220,15 +220,12 @@ def prepare_wav(
     data_dir: str | Path | None = None,
     timeout_sec: float | int | None = None,
 ) -> Path:
-    """Кладёт WAV в {DATA_DIR}/tmp/<task_id>/audio.wav. MP3/M4A конвертирует через ffmpeg."""
+    """Кладёт моно 16 кГц WAV в {DATA_DIR}/tmp/<task_id>/audio.wav через ffmpeg."""
     src_path = Path(src)
     dest_dir = create_tmp(task_id, data_dir)
     dest = dest_dir / "audio.wav"
     suffix = src_path.suffix.lower()
-    if suffix == ".wav":
-        shutil.copy2(src_path, dest)
-        return dest
-    if suffix in CONVERT_SUFFIXES:
-        _run_ffmpeg(src_path, dest, timeout_sec)
-        return dest
-    raise ValueError(f"unsupported audio format: {suffix}")
+    if suffix not in PREPARE_SUFFIXES:
+        raise ValueError(f"unsupported audio format: {suffix}")
+    _run_ffmpeg(src_path, dest, timeout_sec)
+    return dest
