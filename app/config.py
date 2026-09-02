@@ -68,6 +68,13 @@ class Settings(BaseSettings):
             raise ValueError("MAX_UPLOAD_BYTES must be > 0")
         return value
 
+    @field_validator("WORKERS")
+    @classmethod
+    def _positive_workers(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("WORKERS must be >= 1")
+        return value
+
     def asr_families_to_preload(self) -> tuple[str, ...]:
         if self.PRELOAD_ASR == "all":
             return ("whisper", "gigaam")

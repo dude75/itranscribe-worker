@@ -12,7 +12,7 @@ On-premise **ASR + optional speaker diarization** HTTP service. Submit an audio 
   - ASR: `whisper` or `gigaam` (required)
   - Diarization: `nemo` or `pyannote`, or **omit / empty** to skip diarization (transcription only)
 - Concrete checkpoints (Whisper size, GigaAM name, PyAnnote pipeline, NeMo models) are set in `.env`, not in the request body.
-- One Python process: selected families are loaded once at startup and shared by task slots.
+- One Python process: each `WORKERS` slot is a full in-memory copy of every model loaded by `PRELOAD_*`. Files on disk are not duplicated.
 
 `POST /transcribe` returns **202** with a `task_id`. Fetch the result from `/tasks`.
 
@@ -79,7 +79,7 @@ Copy names into `.env`. **Do not put real tokens in git or in this README.** Cha
 | `PRELOAD_ASR`             | Which ASR families to load and download at startup: `whisper`, `gigaam`, or `all` (default).                                                                                                                                                |
 | `PRELOAD_DIARIZATION`     | Which diarization families to load and download at startup: `nemo`, `pyannote`, or `all` (default).                                                                                                                                         |
 | `DEVICE`                  | Inference device: `auto` (default), `cpu`, or `cuda`. `auto` uses CUDA when `torch.cuda.is_available()`, otherwise CPU. `cpu` never uses the GPU. `cuda` requires CUDA or the process fails at startup. Docker Compose sets this per image. |
-| `WORKERS`                 | How many **tasks** may run at once in this process. Default `1`. Not uvicorn workers; weights are shared.                                                                                                                                   |
+| `WORKERS`                 | How many **tasks** may run at once in this process. Default `1`. Not uvicorn workers. Each slot is a full in-memory copy of every loaded model (RAM/VRAM × `WORKERS`); files on disk stay one set.                                          |
 | `WORKER_QUEUE_SIZE`       | Max `queued` tasks waiting for a slot. Default `4`. Beyond that: `503` `queue_full`.                                                                                                                                                        |
 | `MAX_UPLOAD_BYTES`        | Max `POST /transcribe` body in bytes (`Content-Length` and streamed file bytes). Default `1073741824` (1 GiB). Over the limit: HTTP **413** `payload_too_large`.                                                                            |
 | `TASK_TTL_SEC`            | Seconds after `success`/`error` before the SQLite row is deleted. `0` = no TTL (delete only via `DELETE`).                                                                                                                                  |

@@ -44,7 +44,9 @@ class TaskRunner:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
         self.store = TaskStore(self.settings.SQLITE_PATH)
-        self._slots = asyncio.Semaphore(self.settings.WORKERS)
+        self._free_slots: asyncio.Queue[int] = asyncio.Queue()
+        for index in range(self.settings.WORKERS):
+            self._free_slots.put_nowait(index)
         self._queue: asyncio.Queue[str] = asyncio.Queue()
         self._submit_lock = asyncio.Lock()
         self._cancelled: set[str] = set()
@@ -178,10 +180,15 @@ class TaskRunner:
         try:
             if task_id in self._cancelled:
                 return
-            async with self._slots:
+            slot = await self._free_slots.get()
+            try:
                 if task_id in self._cancelled or self.store.get(task_id) is None:
                     return
-                await asyncio.to_thread(run_pipeline, self.store, self.settings, task_id)
+                await asyncio.to_thread(
+                    run_pipeline, self.store, self.settings, task_id, slot
+                )
+            finally:
+                self._free_slots.put_nowait(slot)
         finally:
             self._queue.task_done()
 

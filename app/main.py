@@ -65,8 +65,8 @@ async def lifespan(app: FastAPI):
 
     if os.environ.get("ITRANSCRIBE_STUBS", "").lower() in {"1", "true", "yes"}:
         cache.reset()
-        pipeline.resolve_asr = lambda _model: StubASR()
-        pipeline.resolve_diarization = lambda _model: StubDiarization()
+        pipeline.resolve_asr = lambda _model, _slot=0: StubASR()
+        pipeline.resolve_diarization = lambda _model, _slot=0: StubDiarization()
     else:
         cache.preload(settings)
         pipeline.resolve_asr = cache.resolve_asr

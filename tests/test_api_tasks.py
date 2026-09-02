@@ -337,6 +337,58 @@ def _poll_client(client: TestClient, task_id: str, timeout: float = 5.0) -> dict
     raise AssertionError(f"timeout polling {task_id}: {result.json() if result else None}")
 
 
+def test_two_workers_run_two_tasks_in_parallel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _isolate_env(tmp_path, monkeypatch, workers="2", queue_size="4")
+    wav = _write_wav(tmp_path / "sample.wav")
+    entered = threading.Semaphore(0)
+    release = threading.Event()
+    original = StubASR.words
+
+    def slow(self, wav_path: str):
+        entered.release()
+        assert release.wait(timeout=15)
+        return original(self, wav_path)
+
+    StubASR.words = slow  # type: ignore[method-assign]
+
+    async def scenario() -> None:
+        settings = get_settings()
+        runner = TaskRunner(settings)
+        await runner.start()
+        first = await runner.submit(wav, AsrModel.whisper, None)
+        second = await runner.submit(wav, AsrModel.gigaam, None)
+        assert await asyncio.to_thread(entered.acquire, True, 5)
+        assert await asyncio.to_thread(entered.acquire, True, 5)
+        running = {
+            rec.status
+            for rec in (
+                runner.store.get(first.task_id),
+                runner.store.get(second.task_id),
+            )
+            if rec is not None
+        }
+        assert running == {TaskStatus.running}
+        release.set()
+        done_first = await _wait_store(
+            runner.store, first.task_id, {TaskStatus.success, TaskStatus.error}
+        )
+        done_second = await _wait_store(
+            runner.store, second.task_id, {TaskStatus.success, TaskStatus.error}
+        )
+        await runner.stop()
+        assert done_first.status is TaskStatus.success
+        assert done_second.status is TaskStatus.success
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        release.set()
+        StubASR.words = original  # type: ignore[method-assign]
+        get_settings.cache_clear()
+
+
 def test_restart_queued_survives_stop(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

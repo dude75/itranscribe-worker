@@ -28,6 +28,7 @@ def test_preload_defaults_all() -> None:
     assert settings.FFMPEG_TIMEOUT_SEC == 120
     assert settings.TASK_MAX_RESTARTS == 1
     assert settings.MAX_UPLOAD_BYTES == 1024 ** 3
+    assert settings.WORKERS == 1
     assert settings.asr_families_to_preload() == ("whisper", "gigaam")
     assert settings.diarization_families_to_preload() == ("nemo", "pyannote")
 
@@ -75,6 +76,13 @@ def test_max_upload_bytes_rejects_non_positive() -> None:
         Settings(MAX_UPLOAD_BYTES=-1, _env_file=None)
 
 
+def test_workers_rejects_non_positive() -> None:
+    with pytest.raises(ValidationError):
+        Settings(WORKERS=0, _env_file=None)
+    with pytest.raises(ValidationError):
+        Settings(WORKERS=-1, _env_file=None)
+
+
 def test_preload_skips_constructors_and_marks_disabled(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -114,6 +122,7 @@ def test_preload_skips_constructors_and_marks_disabled(
 
     assert cache.resolve_asr(AsrModel.whisper) is not None
     assert cache.resolve_diarization(DiarizationModel.nemo) is not None
+    assert cache.replicas == 1
 
 
 def test_preload_gigaam_unavailable_without_token(
@@ -170,6 +179,42 @@ def test_preload_all_constructs_every_family(
     }
 
 
+def test_preload_workers_builds_independent_replicas(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    constructed: list[str] = []
+    monkeypatch.setattr("app.engines.cache.FasterWhisperASR", _spy("whisper", constructed))
+    monkeypatch.setattr("app.engines.cache.GigaAMASR", _spy("gigaam", constructed))
+    monkeypatch.setattr("app.engines.cache.NemoSortformerDiarizer", _spy("nemo", constructed))
+    monkeypatch.setattr("app.engines.cache.PyannoteDiarizer", _spy("pyannote", constructed))
+    monkeypatch.setattr(
+        "app.engines.cache.infer_device", lambda *_args, **_kwargs: ("cpu", "float32")
+    )
+
+    settings = Settings(
+        PRELOAD_ASR="whisper",
+        PRELOAD_DIARIZATION="nemo",
+        WORKERS=2,
+        MODELS_DIR=str(tmp_path),
+        HF_TOKEN="token",
+        _env_file=None,
+    )
+    cache = EngineCache()
+    cache.preload(settings)
+
+    assert constructed == ["whisper", "whisper", "nemo", "nemo"]
+    assert cache.replicas == 2
+    first = cache.resolve_asr(AsrModel.whisper, 0)
+    second = cache.resolve_asr(AsrModel.whisper, 1)
+    assert first is not second
+    assert cache.resolve_diarization(DiarizationModel.nemo, 0) is not cache.resolve_diarization(
+        DiarizationModel.nemo, 1
+    )
+    with pytest.raises(TaskFailed) as exc:
+        cache.resolve_asr(AsrModel.whisper, 2)
+    assert exc.value.code is ErrorCode.engine_unavailable
+
+
 def test_preload_failure_logs_exception_for_every_family(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -188,6 +233,7 @@ def test_preload_failure_logs_exception_for_every_family(
     settings = Settings(
         PRELOAD_ASR="all",
         PRELOAD_DIARIZATION="all",
+        WORKERS=2,
         MODELS_DIR=str(tmp_path),
         HF_TOKEN="token",
         _env_file=None,

@@ -1,4 +1,4 @@
-"""Кэш движков процесса. Preload при старте, веса общие для слотов."""
+"""Кэш движков процесса. Preload: полная копия загруженных моделей на слот WORKERS."""
 
 from __future__ import annotations
 
@@ -32,9 +32,10 @@ class EngineCache:
             "nemo": EngineStatus.unavailable,
             "pyannote": EngineStatus.unavailable,
         }
-        self._asr: dict[AsrModel, ASREngine | None] = {}
-        self._diar: dict[DiarizationModel, DiarizationEngine | None] = {}
+        self._asr: dict[AsrModel, list[ASREngine | None]] = {}
+        self._diar: dict[DiarizationModel, list[DiarizationEngine | None]] = {}
         self.device = "cpu"
+        self.replicas = 1
 
     def reset(self) -> None:
         self.preloaded = False
@@ -47,27 +48,34 @@ class EngineCache:
         self._asr.clear()
         self._diar.clear()
         self.device = "cpu"
+        self.replicas = 1
 
     def _preload_engine[K: Enum, E](
         self,
         wanted: set[str],
-        slot: dict[K, E | None],
+        slot: dict[K, list[E | None]],
         key: K,
         factory: Callable[[], E],
+        replicas: int,
     ) -> None:
         name = key.value
+        empty: list[E | None] = [None] * replicas
         if name not in wanted:
-            slot[key] = None
+            slot[key] = empty
             self.status[name] = EngineStatus.disabled
             return
+        copies: list[E | None] = []
         t0 = time.perf_counter()
         try:
-            slot[key] = factory()
-            self.status[name] = EngineStatus.loaded
+            for _ in range(replicas):
+                copies.append(factory())
         except Exception as exc:
             log.warning("%s preload failed: %s: %s", name, type(exc).__name__, exc)
-            slot[key] = None
+            slot[key] = empty
             self.status[name] = EngineStatus.unavailable
+        else:
+            slot[key] = copies
+            self.status[name] = EngineStatus.loaded
         finally:
             _observe_preload(name, t0)
 
@@ -82,14 +90,16 @@ class EngineCache:
             os.environ["HUGGING_FACE_HUB_TOKEN"] = settings.HF_TOKEN
         device, dtype = infer_device(settings.DEVICE)
         self.device = device
+        self.replicas = settings.WORKERS
         asr_wanted = set(settings.asr_families_to_preload())
         diar_wanted = set(settings.diarization_families_to_preload())
         log.info(
-            "preload asr=%s diarization=%s device=%s dtype=%s",
+            "preload asr=%s diarization=%s device=%s dtype=%s workers=%s",
             settings.PRELOAD_ASR,
             settings.PRELOAD_DIARIZATION,
             device,
             dtype,
+            self.replicas,
         )
 
         self._preload_engine(
@@ -99,6 +109,7 @@ class EngineCache:
             lambda: FasterWhisperASR(
                 settings.WHISPER_MODEL, models_dir, device=device, compute_type=dtype
             ),
+            self.replicas,
         )
         self._preload_engine(
             asr_wanted,
@@ -110,6 +121,7 @@ class EngineCache:
                 device=device,
                 hf_token=settings.HF_TOKEN,
             ),
+            self.replicas,
         )
         self._preload_engine(
             diar_wanted,
@@ -121,6 +133,7 @@ class EngineCache:
                 device=device,
                 hf_token=settings.HF_TOKEN,
             ),
+            self.replicas,
         )
         self._preload_engine(
             diar_wanted,
@@ -132,25 +145,34 @@ class EngineCache:
                 hf_token=settings.HF_TOKEN,
                 device=device,
             ),
+            self.replicas,
         )
 
         self.preloaded = True
 
-    def resolve_asr(self, model: AsrModel) -> ASREngine:
+    def resolve_asr(self, model: AsrModel, slot: int = 0) -> ASREngine:
         if not self.preloaded:
             return StubASR()
-        engine = self._asr.get(model)
+        engine = _replica(self._asr.get(model), slot)
         if engine is None:
             raise TaskFailed(ErrorCode.engine_unavailable, f"{model.value} unavailable")
         return engine
 
-    def resolve_diarization(self, model: DiarizationModel) -> DiarizationEngine:
+    def resolve_diarization(
+        self, model: DiarizationModel, slot: int = 0
+    ) -> DiarizationEngine:
         if not self.preloaded:
             return StubDiarization()
-        engine = self._diar.get(model)
+        engine = _replica(self._diar.get(model), slot)
         if engine is None:
             raise TaskFailed(ErrorCode.engine_unavailable, f"{model.value} unavailable")
         return engine
+
+
+def _replica[E](replicas: list[E | None] | None, slot: int) -> E | None:
+    if replicas is None or slot < 0 or slot >= len(replicas):
+        return None
+    return replicas[slot]
 
 
 _cache = EngineCache()

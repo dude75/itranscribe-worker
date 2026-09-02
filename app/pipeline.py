@@ -31,11 +31,11 @@ class TaskFailed(Exception):
         self.message = message
 
 
-def resolve_asr(_model: AsrModel) -> ASREngine:
+def resolve_asr(_model: AsrModel, _slot: int = 0) -> ASREngine:
     return StubASR()
 
 
-def resolve_diarization(_model: DiarizationModel) -> DiarizationEngine:
+def resolve_diarization(_model: DiarizationModel, _slot: int = 0) -> DiarizationEngine:
     return StubDiarization()
 
 
@@ -107,7 +107,7 @@ def _emit_task_metrics(
     )
 
 
-def run_pipeline(store: TaskStore, settings: Settings, task_id: str) -> None:
+def run_pipeline(store: TaskStore, settings: Settings, task_id: str, slot: int = 0) -> None:
     record = store.get(task_id)
     if record is None:
         return
@@ -139,7 +139,7 @@ def run_pipeline(store: TaskStore, settings: Settings, task_id: str) -> None:
         if duration <= 0:
             raise TaskFailed(ErrorCode.zero_duration, "audio duration is zero")
 
-        asr = resolve_asr(record.asr_model)
+        asr = resolve_asr(record.asr_model, slot)
 
         t0 = time.perf_counter()
         words = list(asr.words(str(wav)))
@@ -151,7 +151,7 @@ def run_pipeline(store: TaskStore, settings: Settings, task_id: str) -> None:
             utterances = utterances_from_words(words)
             align_time = time.perf_counter() - t0
         else:
-            diar = resolve_diarization(record.diarization_model)
+            diar = resolve_diarization(record.diarization_model, slot)
             t0 = time.perf_counter()
             segments = list(diar.segments(str(wav)))
             diar_time = time.perf_counter() - t0
