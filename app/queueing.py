@@ -54,12 +54,20 @@ class TaskRunner:
     def _restore_unfinished(self) -> None:
         data_dir = self.settings.DATA_DIR
         for record in self.store.list_tasks(TaskStatus.running):
-            if _upload_exists(record):
-                self.store.reset_to_queued(record.task_id)
-            else:
+            if not _upload_exists(record):
                 self.store.mark_error(record.task_id, ErrorDetail(code="interrupted"))
                 observe_restore("interrupted")
                 cleanup_tmp(record.task_id, data_dir)
+                continue
+            attempts = self.store.bump_attempts(record.task_id)
+            if attempts > self.settings.TASK_MAX_RESTARTS:
+                self.store.mark_error(
+                    record.task_id, ErrorDetail(code="process_killed")
+                )
+                observe_restore("process_killed")
+                cleanup_tmp(record.task_id, data_dir)
+            else:
+                self.store.reset_to_queued(record.task_id)
         for record in self.store.list_tasks(TaskStatus.queued):
             if not _upload_exists(record):
                 self.store.mark_error(record.task_id, ErrorDetail(code="missing_upload"))

@@ -234,3 +234,48 @@ def test_restore_missing_upload_metric(tmp_path: Path, monkeypatch: pytest.Monke
     finally:
         set_active(None)
         get_settings.cache_clear()
+
+
+def test_restore_process_killed_metric(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ITRANSCRIBE_STUBS", "1")
+    monkeypatch.setenv("SQLITE_PATH", str(tmp_path / "tasks.db"))
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setenv("PERFORMANCE_LOG", str(tmp_path / "logs" / "performance_log.csv"))
+    monkeypatch.setenv("TASK_MAX_RESTARTS", "0")
+    get_settings.cache_clear()
+    settings = get_settings()
+    metrics = Metrics(enabled=True)
+    set_active(metrics)
+    store = TaskStore(settings.SQLITE_PATH)
+    asr_ckpt, diar_ckpt = checkpoints_for(settings, AsrModel.whisper, None)
+    dest_dir = tmp_path / "tmp" / "poison-metric"
+    dest_dir.mkdir(parents=True)
+    dest = dest_dir / "upload.wav"
+    sf.write(dest, np.zeros(8000, dtype=np.float32), 16000)
+    store.create(
+        "poison-metric",
+        AsrModel.whisper,
+        None,
+        asr_ckpt,
+        diar_ckpt,
+        str(dest),
+    )
+    assert store.mark_running("poison-metric")
+    store.close()
+
+    async def scenario() -> None:
+        runner = TaskRunner(settings)
+        await runner.start()
+        rec = runner.store.get("poison-metric")
+        assert rec is not None
+        assert rec.status.value == "error"
+        await runner.stop()
+
+    try:
+        asyncio.run(scenario())
+        body = generate_latest(metrics.registry).decode()
+        assert _sample(body, "itranscribe_restore_tasks_total", {"outcome": "process_killed"}) == 1.0
+    finally:
+        set_active(None)
+        get_settings.cache_clear()

@@ -25,6 +25,7 @@ def test_preload_defaults_all() -> None:
     assert settings.PRELOAD_DIARIZATION == "all"
     assert settings.DEVICE == "auto"
     assert settings.FFMPEG_TIMEOUT_SEC == 120
+    assert settings.TASK_MAX_RESTARTS == 1
     assert settings.asr_families_to_preload() == ("whisper", "gigaam")
     assert settings.diarization_families_to_preload() == ("nemo", "pyannote")
 
@@ -58,6 +59,11 @@ def test_preload_normalizes_case_and_whitespace() -> None:
 def test_preload_rejects_unknown(field: str, value: str) -> None:
     with pytest.raises(ValidationError):
         Settings(**{field: value}, _env_file=None)
+
+
+def test_task_max_restarts_rejects_negative() -> None:
+    with pytest.raises(ValidationError):
+        Settings(TASK_MAX_RESTARTS=-1, _env_file=None)
 
 
 def test_preload_skips_constructors_and_marks_disabled(

@@ -44,12 +44,20 @@ class Settings(BaseSettings):
     WORKER_QUEUE_SIZE: int = 4
     TASK_TTL_SEC: int = 3600
     FFMPEG_TIMEOUT_SEC: int = 120
+    TASK_MAX_RESTARTS: int = 1
 
     @field_validator("PRELOAD_ASR", "PRELOAD_DIARIZATION", "DEVICE", mode="before")
     @classmethod
     def _normalize_preload(cls, value: object) -> object:
         if isinstance(value, str):
             return value.strip().lower()
+        return value
+
+    @field_validator("TASK_MAX_RESTARTS")
+    @classmethod
+    def _non_negative_restarts(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("TASK_MAX_RESTARTS must be >= 0")
         return value
 
     def asr_families_to_preload(self) -> tuple[str, ...]:

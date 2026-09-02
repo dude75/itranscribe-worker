@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+import sqlite3
 import threading
 import time
 import uuid
@@ -272,6 +273,7 @@ def _isolate_env(
     *,
     workers: str = "1",
     queue_size: str = "4",
+    max_restarts: str | None = None,
 ) -> None:
     monkeypatch.setenv("ITRANSCRIBE_STUBS", "1")
     monkeypatch.setenv("SQLITE_PATH", str(tmp_path / "tasks.db"))
@@ -280,6 +282,8 @@ def _isolate_env(
     monkeypatch.setenv("PERFORMANCE_LOG", str(tmp_path / "logs" / "performance_log.csv"))
     monkeypatch.setenv("WORKERS", workers)
     monkeypatch.setenv("WORKER_QUEUE_SIZE", queue_size)
+    if max_restarts is not None:
+        monkeypatch.setenv("TASK_MAX_RESTARTS", max_restarts)
     get_settings.cache_clear()
 
 
@@ -490,6 +494,170 @@ def test_restore_fifo_order_and_queue_limit_not_applied(
         asyncio.run(scenario())
     finally:
         get_settings.cache_clear()
+
+
+def _seed_running_with_upload(tmp_path: Path, task_id: str, wav: Path) -> None:
+    settings = get_settings()
+    store = TaskStore(settings.SQLITE_PATH)
+    asr_ckpt, diar_ckpt = checkpoints_for(settings, AsrModel.whisper, None)
+    dest_dir = create_tmp(task_id, tmp_path)
+    dest = dest_dir / "upload.wav"
+    shutil.copy2(wav, dest)
+    store.create(task_id, AsrModel.whisper, None, asr_ckpt, diar_ckpt, str(dest))
+    assert store.mark_running(task_id)
+    store.close()
+
+
+def test_restore_running_zero_restarts_process_killed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _isolate_env(tmp_path, monkeypatch, max_restarts="0")
+    wav = _write_wav(tmp_path / "sample.wav")
+    _seed_running_with_upload(tmp_path, "poison-0", wav)
+
+    async def scenario() -> None:
+        runner = TaskRunner(get_settings())
+        await runner.start()
+        rec = runner.store.get("poison-0")
+        assert rec is not None
+        assert rec.status is TaskStatus.error
+        assert rec.error is not None
+        assert rec.error["code"] == "process_killed"
+        assert rec.attempts == 1
+        assert runner.store.count_queued() == 0
+        assert not (tmp_path / "tmp" / "poison-0").exists()
+        await runner.delete("poison-0")
+        assert runner.store.get("poison-0") is None
+        await runner.stop()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        get_settings.cache_clear()
+
+
+def test_restore_running_under_limit_retries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _isolate_env(tmp_path, monkeypatch)
+    wav = _write_wav(tmp_path / "sample.wav")
+    _seed_running_with_upload(tmp_path, "retry-1", wav)
+
+    async def scenario() -> None:
+        runner = TaskRunner(get_settings())
+        await runner.start()
+        done = await _wait_store(
+            runner.store, "retry-1", {TaskStatus.success, TaskStatus.error}
+        )
+        assert done.status is TaskStatus.success
+        assert done.attempts == 1
+        await runner.stop()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        get_settings.cache_clear()
+
+
+def test_restore_running_errors_when_attempts_exceed_max(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _isolate_env(tmp_path, monkeypatch)
+    wav = _write_wav(tmp_path / "sample.wav")
+    _seed_running_with_upload(tmp_path, "poison-2", wav)
+    store = TaskStore(get_settings().SQLITE_PATH)
+    assert store.bump_attempts("poison-2") == 1
+    store.close()
+
+    async def scenario() -> None:
+        runner = TaskRunner(get_settings())
+        await runner.start()
+        rec = runner.store.get("poison-2")
+        assert rec is not None
+        assert rec.status is TaskStatus.error
+        assert rec.error is not None
+        assert rec.error["code"] == "process_killed"
+        assert rec.attempts == 2
+        assert runner.store.count_queued() == 0
+        assert not (tmp_path / "tmp" / "poison-2").exists()
+        await runner.stop()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        get_settings.cache_clear()
+
+
+def test_pipeline_error_does_not_increment_attempts(
+    client: TestClient, wav_bytes: tuple[str, bytes]
+) -> None:
+    original = StubASR.words
+
+    def boom(self, wav_path: str):
+        raise RuntimeError("simulated python exception")
+
+    StubASR.words = boom  # type: ignore[method-assign]
+    try:
+        created = _post_transcribe(client, wav_bytes, asr_model="whisper")
+        assert created.status_code == 202
+        task_id = created.json()["meta"]["task_id"]
+        payload = _poll_client(client, task_id)
+        assert payload["status"] == "error"
+        assert payload["error"]["code"] == "pipeline_error"
+        rec = app.state.runner.store.get(task_id)
+        assert rec is not None
+        assert rec.attempts == 0
+    finally:
+        StubASR.words = original  # type: ignore[method-assign]
+
+
+def test_attempts_column_migrated_on_existing_db(tmp_path: Path) -> None:
+    db = tmp_path / "legacy.db"
+    conn = sqlite3.connect(str(db))
+    conn.execute(
+        """
+        CREATE TABLE tasks (
+            task_id TEXT PRIMARY KEY,
+            status TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            asr_model TEXT NOT NULL,
+            diarization_model TEXT NOT NULL,
+            asr_checkpoint TEXT,
+            diarization_checkpoint TEXT,
+            started_at TEXT,
+            finished_at TEXT,
+            audio_duration_sec REAL,
+            asr_time_sec REAL,
+            diarization_time_sec REAL,
+            alignment_time_sec REAL,
+            total_time_sec REAL,
+            rtf REAL,
+            transcript TEXT,
+            error TEXT,
+            upload_path TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO tasks (
+            task_id, status, timestamp, asr_model, diarization_model
+        ) VALUES (?, ?, ?, ?, ?)
+        """,
+        ("legacy-1", "queued", "2026-01-01T00:00:00", "whisper", ""),
+    )
+    conn.commit()
+    conn.close()
+
+    store = TaskStore(str(db))
+    rec = store.get("legacy-1")
+    assert rec is not None
+    assert rec.attempts == 0
+    assert store.bump_attempts("legacy-1") == 1
+    rec = store.get("legacy-1")
+    assert rec is not None
+    assert rec.attempts == 1
+    store.close()
 
 
 def test_purge_unauthorized(client: TestClient) -> None:

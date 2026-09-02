@@ -33,6 +33,7 @@ class TaskRecord:
     transcript: list[dict[str, Any]] | None = None
     error: dict[str, Any] | None = None
     upload_path: str | None = None
+    attempts: int = 0
 
 
 def _now() -> str:
@@ -71,10 +72,19 @@ class TaskStore:
                     rtf REAL,
                     transcript TEXT,
                     error TEXT,
-                    upload_path TEXT
+                    upload_path TEXT,
+                    attempts INTEGER NOT NULL DEFAULT 0
                 )
                 """
             )
+            columns = {
+                row[1]
+                for row in self._conn.execute("PRAGMA table_info(tasks)").fetchall()
+            }
+            if "attempts" not in columns:
+                self._conn.execute(
+                    "ALTER TABLE tasks ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0"
+                )
             self._conn.commit()
 
     def close(self) -> None:
@@ -143,6 +153,20 @@ class TaskStore:
                 (TaskStatus.queued.value,),
             ).fetchall()
         return [_row_to_record(row) for row in rows]
+
+    def bump_attempts(self, task_id: str) -> int:
+        """Увеличить счётчик смертей процесса на running-задаче. Возвращает новое значение."""
+        with self._lock:
+            self._conn.execute(
+                "UPDATE tasks SET attempts = attempts + 1 WHERE task_id = ?",
+                (task_id,),
+            )
+            self._conn.commit()
+            row = self._conn.execute(
+                "SELECT attempts FROM tasks WHERE task_id = ?",
+                (task_id,),
+            ).fetchone()
+        return int(row["attempts"]) if row is not None else 0
 
     def reset_to_queued(self, task_id: str) -> None:
         """Вернуть running в queued и сбросить поля прогресса, чтобы mark_running снова сработал."""
@@ -344,4 +368,5 @@ def _row_to_record(row: sqlite3.Row) -> TaskRecord:
         transcript=transcript,
         error=error,
         upload_path=row["upload_path"],
+        attempts=int(row["attempts"]) if "attempts" in row.keys() else 0,
     )

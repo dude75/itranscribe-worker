@@ -83,6 +83,7 @@ Copy names into `.env`. **Do not put real tokens in git or in this README.** Cha
 | `WORKER_QUEUE_SIZE`       | Max `queued` tasks waiting for a slot. Default `4`. Beyond that: `503` `queue_full`.                                                                                                                                                        |
 | `TASK_TTL_SEC`            | Seconds after `success`/`error` before the SQLite row is deleted. `0` = no TTL (delete only via `DELETE`).                                                                                                                                  |
 | `FFMPEG_TIMEOUT_SEC`      | Seconds allowed for ffmpeg when converting MP3/M4A → WAV. Default `120`. On timeout the task becomes `error` with `ffmpeg_timeout` and the ffmpeg process is killed. `0` = no limit.                                                        |
+| `TASK_MAX_RESTARTS`       | How many times a task found `running` after a process death may be put back in `queued`. Default `1` (one retry). After that: `error` with `process_killed`. `0` = fail on the first restore. CUDA OOM is a caught Python exception (`pipeline_error`) and does not count. |
 
 
 Everything that must survive a restart lives under `./data` (models, `tasks.db`, logs, **and queue tmp** `{DATA_DIR}/tmp/`). Mount that directory in Docker.
@@ -90,7 +91,7 @@ Everything that must survive a restart lives under `./data` (models, `tasks.db`,
 After a process restart (or `docker compose restart`) unfinished work is restored from SQLite + those tmp files — **not** resumed mid-pipeline:
 
 - `queued` tasks with an upload file on disk are put back on the in-memory queue (FIFO by `timestamp`). `WORKER_QUEUE_SIZE` is **not** applied on restore, so the queue may be longer than the limit until it drains; new `POST /transcribe` still uses the limit.
-- A task that was `running` is set back to `queued` and run from scratch if its upload file still exists. If the file is gone, it finishes as `error` with `interrupted`.
+- A task that was `running` is set back to `queued` and run from scratch if its upload file still exists, at most `TASK_MAX_RESTARTS` times (default `1`). Another process death after that finishes as `error` with `process_killed` (kernel OOM-kill, native segfault — not CUDA OOM). If the file is gone, it finishes as `error` with `interrupted`.
 - A `queued` task whose upload file is missing finishes as `error` with `missing_upload` and is not enqueued.
 - Graceful shutdown does **not** delete tmp for queued or running tasks. Finished (`success` / `error`) tmp is still cleaned.
 
@@ -264,6 +265,7 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml down
 | HTTP **200**, `status=error`, `error.code = engine_unavailable` | Requested family is `unavailable` or `disabled` in `/health`. Switch `asr_model` / `diarization_model`, or change preload and restart.    |
 | HTTP **200**, `status=error`, `error.code = missing_upload`     | Upload file for a queued/restored task is gone from `{DATA_DIR}/tmp/`.                                                                    |
 | HTTP **200**, `status=error`, `error.code = interrupted`        | Process died while the task was `running` and the upload file was missing after restart.                                                  |
+| HTTP **200**, `status=error`, `error.code = process_killed`     | Process died while the task was `running` more times than `TASK_MAX_RESTARTS` (kernel OOM-kill / native segfault). The worker stays up. CUDA OOM is `pipeline_error`. |
 | HTTP **200**, `status=error`, `error.code = ffmpeg_timeout`     | ffmpeg did not finish converting MP3/M4A within `FFMPEG_TIMEOUT_SEC`. The converter process is killed; the worker slot is freed.          |
 | HTTP **422**                                                    | Invalid `asr_model` / `diarization_model` (`whisper`/`gigaam`; `nemo`/`pyannote`). Empty `diarization_model` is valid (skip diarization). |
 
