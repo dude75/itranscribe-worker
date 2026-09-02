@@ -99,7 +99,7 @@ def test_smoke_four_combinations(client: TestClient, speech_bytes: tuple[str, by
             continue
         assert body["status"] == "success", body
         assert body["transcript"] is not None
-            assert not tmp_dir(task_id).exists()
+        assert not tmp_dir(task_id).exists()
         assert not Path(f"tmp_{task_id}").exists()
         results[key] = "ok"
 
