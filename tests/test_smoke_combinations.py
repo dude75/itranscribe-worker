@@ -13,6 +13,9 @@ from app.config import get_settings
 from app.main import app
 from app.schemas import AsrModel, DiarizationModel
 
+pytestmark = pytest.mark.ml
+pytest.importorskip("torch")
+
 
 COMBOS = [
     (AsrModel.whisper, DiarizationModel.nemo),
@@ -45,10 +48,12 @@ def _speech_wav(path: Path) -> Path:
 
 @pytest.fixture(scope="module")
 def client():
-    get_settings.cache_clear()
-    with TestClient(app) as test_client:
-        yield test_client
-    get_settings.cache_clear()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("API_TOKEN", "test")
+        get_settings.cache_clear()
+        with TestClient(app) as test_client:
+            yield test_client
+        get_settings.cache_clear()
 
 
 @pytest.fixture(scope="module")

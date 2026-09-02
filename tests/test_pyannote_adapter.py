@@ -30,8 +30,9 @@ class _FakePipeline:
         return self
 
 
+@pytest.mark.ml
 def test_move_pipeline_to_requested_device() -> None:
-    import torch
+    torch = pytest.importorskip("torch")
 
     pipeline = _FakePipeline("cpu")
     moved = move_pipeline_to_device(pipeline, "cpu")
@@ -39,7 +40,10 @@ def test_move_pipeline_to_requested_device() -> None:
     assert moved.device == torch.device("cpu")
 
 
+@pytest.mark.ml
 def test_move_pipeline_raises_when_to_fails() -> None:
+    pytest.importorskip("torch")
+
     class Broken:
         def to(self, device):
             raise RuntimeError("CUDA out of memory")
@@ -48,8 +52,9 @@ def test_move_pipeline_raises_when_to_fails() -> None:
         move_pipeline_to_device(Broken(), "cuda")
 
 
+@pytest.mark.ml
 def test_move_pipeline_raises_when_component_stays_on_cpu() -> None:
-    import torch
+    torch = pytest.importorskip("torch")
 
     class Stuck:
         def __init__(self) -> None:
@@ -107,6 +112,8 @@ def _two_speaker_wav(path: Path) -> Path:
 
 @pytest.fixture(scope="module")
 def pyannote_engine() -> PyannoteDiarizer:
+    pytest.importorskip("torch")
+    pytest.importorskip("pyannote.audio")
     settings = get_settings()
     device, _dtype = infer_device()
     return PyannoteDiarizer(
@@ -117,6 +124,7 @@ def pyannote_engine() -> PyannoteDiarizer:
     )
 
 
+@pytest.mark.ml
 def test_pyannote_two_speakers(pyannote_engine: PyannoteDiarizer, tmp_path: Path) -> None:
     wav = _two_speaker_wav(tmp_path / "two_spk.wav")
     segments = pyannote_engine.segments(str(wav), min_speakers=2, max_speakers=2)

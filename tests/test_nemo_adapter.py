@@ -52,7 +52,9 @@ def test_sortformer_unavailable_app_stays_importable() -> None:
         return
 
 
+@pytest.mark.ml
 def test_sortformer_engine_loads() -> None:
+    pytest.importorskip("nemo")
     settings = get_settings()
     try:
         _import_sortformer()

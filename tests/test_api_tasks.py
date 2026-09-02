@@ -37,6 +37,7 @@ def wav_bytes(tmp_path: Path) -> tuple[str, bytes]:
 
 @pytest.fixture
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("API_TOKEN", "test")
     monkeypatch.setenv("ITRANSCRIBE_STUBS", "1")
     monkeypatch.setenv("SQLITE_PATH", str(tmp_path / "tasks.db"))
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
@@ -295,6 +296,7 @@ def _isolate_env(
     queue_size: str = "4",
     max_restarts: str | None = None,
 ) -> None:
+    monkeypatch.setenv("API_TOKEN", "test")
     monkeypatch.setenv("ITRANSCRIBE_STUBS", "1")
     monkeypatch.setenv("SQLITE_PATH", str(tmp_path / "tasks.db"))
     monkeypatch.setenv("DATA_DIR", str(tmp_path))

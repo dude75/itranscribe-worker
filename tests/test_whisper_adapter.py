@@ -10,6 +10,9 @@ from app.audio import infer_device
 from app.config import get_settings
 from app.engines.asr.whisper import FasterWhisperASR
 
+pytestmark = pytest.mark.ml
+pytest.importorskip("faster_whisper")
+
 
 def _speech_wav(path: Path, text: str = "one two three four") -> Path:
     if shutil.which("say") is None:
@@ -24,6 +27,7 @@ def _speech_wav(path: Path, text: str = "one two three four") -> Path:
 
 @pytest.fixture(scope="module")
 def whisper_engine() -> FasterWhisperASR:
+    pytest.importorskip("faster_whisper")
     settings = get_settings()
     device, dtype = infer_device()
     assert device == "cpu" or device == "cuda"

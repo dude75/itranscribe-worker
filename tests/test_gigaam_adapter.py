@@ -12,6 +12,9 @@ from app.audio import infer_device
 from app.config import get_settings
 from app.engines.asr.gigaam import GigaAMASR
 
+pytestmark = pytest.mark.ml
+pytest.importorskip("gigaam")
+
 
 def _speech_wav(path: Path, text: str = "привет мир") -> Path:
     if shutil.which("say") is None:
@@ -37,6 +40,7 @@ def _repeat_to_duration(src: Path, dest: Path, seconds: float) -> Path:
 
 @pytest.fixture(scope="module")
 def gigaam_engine() -> GigaAMASR:
+    pytest.importorskip("gigaam")
     settings = get_settings()
     device, _dtype = infer_device()
     return GigaAMASR(

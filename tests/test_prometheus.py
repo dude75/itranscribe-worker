@@ -46,6 +46,7 @@ def wav_bytes(tmp_path: Path) -> tuple[str, bytes]:
 
 @pytest.fixture
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("API_TOKEN", "test")
     monkeypatch.setenv("ITRANSCRIBE_STUBS", "1")
     monkeypatch.setenv("SQLITE_PATH", str(tmp_path / "tasks.db"))
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
@@ -180,6 +181,7 @@ def test_csv_still_written(client: TestClient, wav_bytes: tuple[str, bytes]) -> 
 def test_metrics_disabled_does_not_break_transcribe(
     tmp_path: Path, wav_bytes: tuple[str, bytes], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setenv("API_TOKEN", "test")
     monkeypatch.setenv("ITRANSCRIBE_STUBS", "1")
     monkeypatch.setenv("SQLITE_PATH", str(tmp_path / "tasks.db"))
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
@@ -201,6 +203,7 @@ def test_metrics_disabled_does_not_break_transcribe(
 
 
 def test_restore_missing_upload_metric(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("API_TOKEN", "test")
     monkeypatch.setenv("ITRANSCRIBE_STUBS", "1")
     monkeypatch.setenv("SQLITE_PATH", str(tmp_path / "tasks.db"))
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
@@ -237,6 +240,7 @@ def test_restore_missing_upload_metric(tmp_path: Path, monkeypatch: pytest.Monke
 
 
 def test_restore_process_killed_metric(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("API_TOKEN", "test")
     monkeypatch.setenv("ITRANSCRIBE_STUBS", "1")
     monkeypatch.setenv("SQLITE_PATH", str(tmp_path / "tasks.db"))
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
