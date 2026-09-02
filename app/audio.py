@@ -6,12 +6,18 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
+from typing import BinaryIO
 
 import soundfile as sf
 
 TMP_PREFIX = "tmp_"
 TMP_SUBDIR = "tmp"
 UPLOAD_SCRATCH_PREFIX = ".upload_"
+UPLOAD_WRITE_CHUNK = 1024 * 1024
+
+
+class PayloadTooLarge(Exception):
+    code = "payload_too_large"
 
 
 def _cuda_available() -> bool:
@@ -108,6 +114,36 @@ def cleanup_legacy_cwd_tmp(root: str | Path | None = None) -> int:
             shutil.rmtree(path, ignore_errors=True)
             removed += 1
     return removed
+
+
+def write_upload_limited(fileobj: BinaryIO, dest: Path, max_bytes: int) -> int:
+    """Пишет fileobj на dest чанками. При превышении max_bytes удаляет dest и бросает PayloadTooLarge."""
+    if max_bytes <= 0:
+        raise ValueError("max_bytes must be > 0")
+    written = 0
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with dest.open("wb") as out:
+            while True:
+                chunk = fileobj.read(min(UPLOAD_WRITE_CHUNK, max_bytes - written + 1))
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > max_bytes:
+                    raise PayloadTooLarge()
+                out.write(chunk)
+    except Exception:
+        dest.unlink(missing_ok=True)
+        raise
+    return written
+
+
+def place_upload(src: Path, dest: Path) -> None:
+    """Scratch `.upload_*` переименовывает; иначе копирует. dest.parent должен существовать."""
+    if src.name.startswith(UPLOAD_SCRATCH_PREFIX):
+        src.replace(dest)
+    else:
+        shutil.copy2(src, dest)
 
 
 def cleanup_upload_scratch(data_dir: str | Path | None = None) -> int:

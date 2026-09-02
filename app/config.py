@@ -42,6 +42,7 @@ class Settings(BaseSettings):
 
     WORKERS: int = 1
     WORKER_QUEUE_SIZE: int = 4
+    MAX_UPLOAD_BYTES: int = 1024 ** 3
     TASK_TTL_SEC: int = 3600
     FFMPEG_TIMEOUT_SEC: int = 120
     TASK_MAX_RESTARTS: int = 1
@@ -58,6 +59,13 @@ class Settings(BaseSettings):
     def _non_negative_restarts(cls, value: int) -> int:
         if value < 0:
             raise ValueError("TASK_MAX_RESTARTS must be >= 0")
+        return value
+
+    @field_validator("MAX_UPLOAD_BYTES")
+    @classmethod
+    def _positive_upload_limit(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("MAX_UPLOAD_BYTES must be > 0")
         return value
 
     def asr_families_to_preload(self) -> tuple[str, ...]:

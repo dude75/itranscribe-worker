@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import shutil
 import uuid
 from pathlib import Path
 
@@ -13,6 +12,7 @@ from app.audio import (
     cleanup_tmp_except,
     cleanup_upload_scratch,
     create_tmp,
+    place_upload,
 )
 from app.config import Settings, get_settings
 from app.pipeline import checkpoints_for, run_pipeline
@@ -107,7 +107,7 @@ class TaskRunner:
             tmp = create_tmp(task_id, self.settings.DATA_DIR)
             src = Path(src_path)
             dest = tmp / f"upload{src.suffix.lower()}"
-            shutil.copy2(src, dest)
+            await asyncio.to_thread(place_upload, src, dest)
             asr_ckpt, diar_ckpt = checkpoints_for(self.settings, asr_model, diarization_model)
             record = self.store.create(
                 task_id,

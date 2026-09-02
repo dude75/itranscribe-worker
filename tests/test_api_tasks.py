@@ -73,6 +73,26 @@ def test_tasks_unauthorized(client: TestClient) -> None:
     assert response.json()["error"]["code"] == "unauthorized"
 
 
+def test_transcribe_unauthorized(client: TestClient, wav_bytes: tuple[str, bytes]) -> None:
+    name, payload = wav_bytes
+    response = client.post("/transcribe", files={"file": (name, payload, "audio/wav")})
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "unauthorized"
+
+
+def test_transcribe_payload_too_large(
+    client: TestClient, wav_bytes: tuple[str, bytes], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MAX_UPLOAD_BYTES", "100")
+    get_settings.cache_clear()
+    response = _post_transcribe(client, wav_bytes)
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "payload_too_large"
+    listing = client.get("/tasks", headers=_auth_headers())
+    assert listing.status_code == 200
+    assert listing.json() == []
+
+
 def test_invalid_asr_model_422(client: TestClient, wav_bytes: tuple[str, bytes]) -> None:
     response = _post_transcribe(client, wav_bytes, asr_model="nope")
     assert response.status_code == 422

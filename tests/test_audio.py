@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import shutil
 import subprocess
 from pathlib import Path
@@ -10,13 +11,16 @@ import soundfile as sf
 
 from app.audio import (
     FfmpegTimeout,
+    PayloadTooLarge,
     audio_duration_sec,
     cleanup_all_tmp,
     cleanup_tmp,
     create_tmp,
     infer_device,
+    place_upload,
     prepare_wav,
     tmp_dir,
+    write_upload_limited,
 )
 from app.config import get_settings
 
@@ -272,3 +276,37 @@ def test_pipeline_maps_ffmpeg_timeout_to_task_error(
         assert done.error["message"] == "ffmpeg timed out after 5s"
     finally:
         store.close()
+
+
+def test_write_upload_limited_writes_chunks(tmp_path: Path) -> None:
+    dest = tmp_path / "out.bin"
+    written = write_upload_limited(io.BytesIO(b"abc"), dest, 10)
+    assert written == 3
+    assert dest.read_bytes() == b"abc"
+
+
+def test_write_upload_limited_too_large_removes_dest(tmp_path: Path) -> None:
+    dest = tmp_path / "out.bin"
+    with pytest.raises(PayloadTooLarge):
+        write_upload_limited(io.BytesIO(b"abcdef"), dest, 4)
+    assert not dest.exists()
+
+
+def test_place_upload_renames_scratch(tmp_path: Path) -> None:
+    src = tmp_path / ".upload_abc.wav"
+    src.write_bytes(b"hi")
+    dest = tmp_path / "tmp" / "id" / "upload.wav"
+    dest.parent.mkdir(parents=True)
+    place_upload(src, dest)
+    assert dest.read_bytes() == b"hi"
+    assert not src.exists()
+
+
+def test_place_upload_copies_regular_file(tmp_path: Path) -> None:
+    src = tmp_path / "sample.wav"
+    src.write_bytes(b"hi")
+    dest = tmp_path / "tmp" / "id" / "upload.wav"
+    dest.parent.mkdir(parents=True)
+    place_upload(src, dest)
+    assert dest.read_bytes() == b"hi"
+    assert src.exists()

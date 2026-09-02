@@ -17,16 +17,23 @@ UNAUTHORIZED_BODY = {
 }
 
 
+def api_token_is_valid(authorization: str | None) -> bool:
+    expected = get_settings().API_TOKEN
+    if not authorization or not expected:
+        return False
+    parts = authorization.split(None, 1)
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        return False
+    return hmac.compare_digest(parts[1], expected)
+
+
 def require_api_token(
     creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
 ) -> str:
-    expected = get_settings().API_TOKEN
-    provided = creds.credentials if creds is not None else ""
-    scheme_ok = creds is not None and creds.scheme.lower() == "bearer"
-    token_ok = bool(expected) and hmac.compare_digest(provided, expected)
-    if not scheme_ok or not token_ok:
+    header = f"{creds.scheme} {creds.credentials}" if creds is not None else None
+    if not api_token_is_valid(header):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=UNAUTHORIZED_BODY,
         )
-    return provided
+    return creds.credentials if creds is not None else ""

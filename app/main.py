@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
@@ -15,7 +16,8 @@ from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, Uploa
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 
-from app.auth import require_api_token
+from app.audio import PayloadTooLarge, write_upload_limited
+from app.auth import api_token_is_valid, require_api_token
 from app.config import get_settings
 from app.engines.cache import get_cache
 from app.logging_setup import setup_logging
@@ -80,6 +82,42 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="itranscribe-worcker", version=read_version(), lifespan=lifespan)
+
+
+def _api_error(status_code: int, code: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={"status": "error", "error": {"code": code}},
+        headers={"Connection": "close"},
+    )
+
+
+def _transcribe_path(request: Request) -> bool:
+    path = request.scope.get("path") or request.url.path
+    return str(path).rstrip("/") == "/transcribe"
+
+
+@app.middleware("http")
+async def gate_transcribe_upload(request: Request, call_next):
+    """Auth, Content-Length и queue_full до разбора multipart на POST /transcribe."""
+    if request.method != "POST" or not _transcribe_path(request):
+        return await call_next(request)
+    if not api_token_is_valid(request.headers.get("authorization")):
+        return _api_error(status.HTTP_401_UNAUTHORIZED, "unauthorized")
+    settings = get_settings()
+    raw_cl = request.headers.get("content-length")
+    if raw_cl is not None:
+        try:
+            size = int(raw_cl)
+        except ValueError:
+            size = -1
+        if size < 0 or size > settings.MAX_UPLOAD_BYTES:
+            return _api_error(status.HTTP_413_CONTENT_TOO_LARGE, "payload_too_large")
+    runner = getattr(request.app.state, "runner", None)
+    if runner is not None and runner.store.count_queued() >= settings.WORKER_QUEUE_SIZE:
+        observe_queue_rejected()
+        return _api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "queue_full")
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -171,7 +209,15 @@ async def transcribe(
     scratch_dir = Path(settings.DATA_DIR)
     scratch_dir.mkdir(parents=True, exist_ok=True)
     scratch = scratch_dir / f".upload_{uuid.uuid4()}{suffix}"
-    scratch.write_bytes(await file.read())
+    try:
+        await asyncio.to_thread(
+            write_upload_limited, file.file, scratch, settings.MAX_UPLOAD_BYTES
+        )
+    except PayloadTooLarge:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail={"status": "error", "error": {"code": "payload_too_large"}},
+        ) from None
     try:
         record = await runner.submit(scratch, asr_model, diarization_model)
     except QueueFullError:
