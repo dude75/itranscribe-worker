@@ -8,13 +8,9 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.config import get_settings
+from app.schemas import ErrorCode, error_payload
 
 _bearer = HTTPBearer(auto_error=False)
-
-UNAUTHORIZED_BODY = {
-    "status": "error",
-    "error": {"code": "unauthorized"},
-}
 
 
 def api_token_is_valid(authorization: str | None) -> bool:
@@ -34,6 +30,6 @@ def require_api_token(
     if not api_token_is_valid(header):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=UNAUTHORIZED_BODY,
+            detail=error_payload(ErrorCode.unauthorized),
         )
     return creds.credentials if creds is not None else ""

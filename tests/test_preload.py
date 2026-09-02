@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -8,7 +9,7 @@ from pydantic import ValidationError
 from app.config import Settings
 from app.engines.cache import EngineCache
 from app.pipeline import TaskFailed
-from app.schemas import AsrModel, DiarizationModel, EngineStatus
+from app.schemas import AsrModel, DiarizationModel, EngineStatus, ErrorCode
 
 
 def _spy(name: str, constructed: list[str]):
@@ -105,11 +106,11 @@ def test_preload_skips_constructors_and_marks_disabled(
 
     with pytest.raises(TaskFailed) as asr_exc:
         cache.resolve_asr(AsrModel.gigaam)
-    assert asr_exc.value.code == "engine_unavailable"
+    assert asr_exc.value.code is ErrorCode.engine_unavailable
 
     with pytest.raises(TaskFailed) as diar_exc:
         cache.resolve_diarization(DiarizationModel.pyannote)
-    assert diar_exc.value.code == "engine_unavailable"
+    assert diar_exc.value.code is ErrorCode.engine_unavailable
 
     assert cache.resolve_asr(AsrModel.whisper) is not None
     assert cache.resolve_diarization(DiarizationModel.nemo) is not None
@@ -136,7 +137,7 @@ def test_preload_gigaam_unavailable_without_token(
     assert cache.status["gigaam"] is EngineStatus.unavailable
     with pytest.raises(TaskFailed) as exc:
         cache.resolve_asr(AsrModel.gigaam)
-    assert exc.value.code == "engine_unavailable"
+    assert exc.value.code is ErrorCode.engine_unavailable
 
 
 def test_preload_all_constructs_every_family(
@@ -167,3 +168,34 @@ def test_preload_all_constructs_every_family(
         "nemo": EngineStatus.loaded,
         "pyannote": EngineStatus.loaded,
     }
+
+
+def test_preload_failure_logs_exception_for_every_family(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    class Boom:
+        def __init__(self, *args, **kwargs) -> None:
+            raise RuntimeError("weights missing")
+
+    monkeypatch.setattr("app.engines.cache.FasterWhisperASR", Boom)
+    monkeypatch.setattr("app.engines.cache.GigaAMASR", Boom)
+    monkeypatch.setattr("app.engines.cache.NemoSortformerDiarizer", Boom)
+    monkeypatch.setattr("app.engines.cache.PyannoteDiarizer", Boom)
+    monkeypatch.setattr(
+        "app.engines.cache.infer_device", lambda *_args, **_kwargs: ("cpu", "float32")
+    )
+
+    settings = Settings(
+        PRELOAD_ASR="all",
+        PRELOAD_DIARIZATION="all",
+        MODELS_DIR=str(tmp_path),
+        HF_TOKEN="token",
+        _env_file=None,
+    )
+    with caplog.at_level(logging.WARNING, logger="app.engines.cache"):
+        EngineCache().preload(settings)
+
+    messages = [record.getMessage() for record in caplog.records]
+    for name in ("whisper", "gigaam", "nemo", "pyannote"):
+        expected = f"{name} preload failed: RuntimeError: weights missing"
+        assert any(expected == message for message in messages), messages

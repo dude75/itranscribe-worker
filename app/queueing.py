@@ -17,16 +17,23 @@ from app.audio import (
 from app.config import Settings, get_settings
 from app.pipeline import checkpoints_for, run_pipeline
 from app.prometheus_metrics import observe_restore, observe_submitted
-from app.schemas import AsrModel, DiarizationModel, ErrorDetail, PurgeResult, TaskStatus
+from app.schemas import (
+    AsrModel,
+    DiarizationModel,
+    ErrorCode,
+    ErrorDetail,
+    PurgeResult,
+    TaskStatus,
+)
 from app.tasks import TaskRecord, TaskStore
 
 
 class QueueFullError(Exception):
-    code = "queue_full"
+    code = ErrorCode.queue_full
 
 
 class TaskRunningError(Exception):
-    code = "task_running"
+    code = ErrorCode.task_running
 
 
 def _upload_exists(record: TaskRecord) -> bool:
@@ -55,23 +62,27 @@ class TaskRunner:
         data_dir = self.settings.DATA_DIR
         for record in self.store.list_tasks(TaskStatus.running):
             if not _upload_exists(record):
-                self.store.mark_error(record.task_id, ErrorDetail(code="interrupted"))
-                observe_restore("interrupted")
+                self.store.mark_error(
+                    record.task_id, ErrorDetail(code=ErrorCode.interrupted)
+                )
+                observe_restore(ErrorCode.interrupted.value)
                 cleanup_tmp(record.task_id, data_dir)
                 continue
             attempts = self.store.bump_attempts(record.task_id)
             if attempts > self.settings.TASK_MAX_RESTARTS:
                 self.store.mark_error(
-                    record.task_id, ErrorDetail(code="process_killed")
+                    record.task_id, ErrorDetail(code=ErrorCode.process_killed)
                 )
-                observe_restore("process_killed")
+                observe_restore(ErrorCode.process_killed.value)
                 cleanup_tmp(record.task_id, data_dir)
             else:
                 self.store.reset_to_queued(record.task_id)
         for record in self.store.list_tasks(TaskStatus.queued):
             if not _upload_exists(record):
-                self.store.mark_error(record.task_id, ErrorDetail(code="missing_upload"))
-                observe_restore("missing_upload")
+                self.store.mark_error(
+                    record.task_id, ErrorDetail(code=ErrorCode.missing_upload)
+                )
+                observe_restore(ErrorCode.missing_upload.value)
                 cleanup_tmp(record.task_id, data_dir)
         # WORKER_QUEUE_SIZE не применяется: после рестарта очередь может быть длиннее лимита.
         for record in self.store.list_queued_fifo():

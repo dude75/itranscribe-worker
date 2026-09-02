@@ -7,18 +7,25 @@ import time
 from pathlib import Path
 
 from app.alignment import align, utterances_from_words
-from app.audio import FfmpegTimeout, audio_duration_sec, cleanup_tmp, infer_device, prepare_wav
+from app.audio import FfmpegTimeout, audio_duration_sec, cleanup_tmp, prepare_wav
 from app.config import Settings
 from app.engines.base import ASREngine, DiarizationEngine
 from app.engines.stubs import StubASR, StubDiarization
 from app.metrics import MetricEvent, write_metric
 from app.prometheus_metrics import observe_task_finished, queue_wait_sec
-from app.schemas import AsrModel, DiarizationModel, ErrorDetail, TaskStatus, TranscriptLine
-from app.tasks import TaskStore
+from app.schemas import (
+    AsrModel,
+    DiarizationModel,
+    ErrorCode,
+    ErrorDetail,
+    TaskStatus,
+    TranscriptLine,
+)
+from app.tasks import TaskRecord, TaskStore
 
 
 class TaskFailed(Exception):
-    def __init__(self, code: str, message: str | None = None) -> None:
+    def __init__(self, code: ErrorCode, message: str | None = None) -> None:
         super().__init__(code)
         self.code = code
         self.message = message
@@ -46,8 +53,61 @@ def _diarization_label(model: DiarizationModel | None) -> str | None:
     return None if model is None else model.value
 
 
+def _rtf(
+    duration: float | None, asr_time: float | None, diar_time: float | None
+) -> float | None:
+    if duration and asr_time is not None and diar_time is not None:
+        return (asr_time + diar_time) / duration
+    return None
+
+
+def _emit_task_metrics(
+    settings: Settings,
+    record: TaskRecord,
+    task_id: str,
+    *,
+    status: str,
+    duration: float | None,
+    asr_time: float | None,
+    diar_time: float | None,
+    align_time: float | None,
+    total_time: float | None,
+    rtf: float | None,
+    error_code: ErrorCode | None = None,
+) -> None:
+    write_metric(
+        settings.PERFORMANCE_LOG,
+        MetricEvent(
+            timestamp=record.timestamp,
+            task_id=task_id,
+            asr_model=record.asr_model.value,
+            diarization_model=_diarization_label(record.diarization_model),
+            asr_checkpoint=record.asr_checkpoint,
+            diarization_checkpoint=record.diarization_checkpoint,
+            audio_duration_sec=duration,
+            asr_time_sec=asr_time,
+            diarization_time_sec=diar_time,
+            alignment_time_sec=align_time,
+            total_time_sec=total_time,
+            rtf=rtf,
+            status=status,
+        ),
+    )
+    observe_task_finished(
+        asr_model=record.asr_model.value,
+        diarization_model=_diarization_label(record.diarization_model),
+        status=status,
+        error_code=None if error_code is None else error_code.value,
+        audio_duration_sec=duration,
+        asr_time_sec=asr_time,
+        diarization_time_sec=diar_time,
+        total_time_sec=total_time,
+        rtf=rtf,
+        queue_wait=queue_wait_sec(record.timestamp),
+    )
+
+
 def run_pipeline(store: TaskStore, settings: Settings, task_id: str) -> None:
-    infer_device()
     record = store.get(task_id)
     if record is None:
         return
@@ -58,10 +118,14 @@ def run_pipeline(store: TaskStore, settings: Settings, task_id: str) -> None:
     asr_time: float | None = None
     diar_time: float | None = None
     align_time: float | None = None
+    total_time: float | None = None
+    rtf: float | None = None
+    outcome: str | None = None
+    error: ErrorDetail | None = None
     try:
         upload = Path(record.upload_path) if record.upload_path else None
         if upload is None or not upload.is_file():
-            raise TaskFailed("missing_upload")
+            raise TaskFailed(ErrorCode.missing_upload)
         try:
             wav = prepare_wav(
                 record.upload_path,
@@ -70,10 +134,10 @@ def run_pipeline(store: TaskStore, settings: Settings, task_id: str) -> None:
                 timeout_sec=settings.FFMPEG_TIMEOUT_SEC,
             )
         except FfmpegTimeout as exc:
-            raise TaskFailed("ffmpeg_timeout", str(exc)) from exc
+            raise TaskFailed(ErrorCode.ffmpeg_timeout, str(exc)) from exc
         duration = audio_duration_sec(wav)
         if duration <= 0:
-            raise TaskFailed("zero_duration", "audio duration is zero")
+            raise TaskFailed(ErrorCode.zero_duration, "audio duration is zero")
 
         asr = resolve_asr(record.asr_model)
 
@@ -112,45 +176,14 @@ def run_pipeline(store: TaskStore, settings: Settings, task_id: str) -> None:
             rtf=rtf,
             transcript=transcript,
         )
-        cleanup_tmp(task_id, settings.DATA_DIR)
-        write_metric(
-            settings.PERFORMANCE_LOG,
-            MetricEvent(
-                timestamp=record.timestamp,
-                task_id=task_id,
-                asr_model=record.asr_model.value,
-                diarization_model=_diarization_label(record.diarization_model),
-                asr_checkpoint=record.asr_checkpoint,
-                diarization_checkpoint=record.diarization_checkpoint,
-                audio_duration_sec=duration,
-                asr_time_sec=asr_time,
-                diarization_time_sec=diar_time,
-                alignment_time_sec=align_time,
-                total_time_sec=total_time,
-                rtf=rtf,
-                status="success",
-            ),
-        )
-        observe_task_finished(
-            asr_model=record.asr_model.value,
-            diarization_model=_diarization_label(record.diarization_model),
-            status="success",
-            audio_duration_sec=duration,
-            asr_time_sec=asr_time,
-            diarization_time_sec=diar_time,
-            total_time_sec=total_time,
-            rtf=rtf,
-            queue_wait=queue_wait_sec(record.timestamp),
-        )
+        outcome = "success"
     except Exception as exc:
         total_time = time.perf_counter() - started
+        rtf = _rtf(duration, asr_time, diar_time)
         if isinstance(exc, TaskFailed):
             error = ErrorDetail(code=exc.code, message=exc.message)
         else:
-            error = ErrorDetail(code="pipeline_error", message=str(exc))
-        rtf = None
-        if duration and asr_time is not None and diar_time is not None:
-            rtf = (asr_time + diar_time) / duration
+            error = ErrorDetail(code=ErrorCode.pipeline_error, message=str(exc))
         store.mark_error(
             task_id,
             error,
@@ -161,42 +194,27 @@ def run_pipeline(store: TaskStore, settings: Settings, task_id: str) -> None:
             total_time_sec=total_time,
             rtf=rtf,
         )
-        cleanup_tmp(task_id, settings.DATA_DIR)
-        write_metric(
-            settings.PERFORMANCE_LOG,
-            MetricEvent(
-                timestamp=record.timestamp,
-                task_id=task_id,
-                asr_model=record.asr_model.value,
-                diarization_model=_diarization_label(record.diarization_model),
-                asr_checkpoint=record.asr_checkpoint,
-                diarization_checkpoint=record.diarization_checkpoint,
-                audio_duration_sec=duration,
-                asr_time_sec=asr_time,
-                diarization_time_sec=diar_time,
-                alignment_time_sec=align_time,
-                total_time_sec=total_time,
-                rtf=rtf,
-                status="error",
-            ),
-        )
-        observe_task_finished(
-            asr_model=record.asr_model.value,
-            diarization_model=_diarization_label(record.diarization_model),
-            status="error",
-            error_code=error.code,
-            audio_duration_sec=duration,
-            asr_time_sec=asr_time,
-            diarization_time_sec=diar_time,
-            total_time_sec=total_time,
-            rtf=rtf,
-            queue_wait=queue_wait_sec(record.timestamp),
-        )
+        outcome = "error"
     finally:
         # Не трогаем tmp running/queued: после рестарта нужен upload. Чистим только финал.
         try:
             current = store.get(task_id)
         except sqlite3.Error:
-            return
-        if current is None or current.status in {TaskStatus.success, TaskStatus.error}:
-            cleanup_tmp(task_id, settings.DATA_DIR)
+            pass
+        else:
+            if current is None or current.status in {TaskStatus.success, TaskStatus.error}:
+                cleanup_tmp(task_id, settings.DATA_DIR)
+        if outcome is not None:
+            _emit_task_metrics(
+                settings,
+                record,
+                task_id,
+                status=outcome,
+                duration=duration,
+                asr_time=asr_time,
+                diar_time=diar_time,
+                align_time=align_time,
+                total_time=total_time,
+                rtf=rtf,
+                error_code=None if error is None else error.code,
+            )

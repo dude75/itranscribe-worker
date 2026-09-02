@@ -10,6 +10,8 @@ from typing import BinaryIO
 
 import soundfile as sf
 
+from app.schemas import ErrorCode
+
 TMP_PREFIX = "tmp_"
 TMP_SUBDIR = "tmp"
 UPLOAD_SCRATCH_PREFIX = ".upload_"
@@ -17,7 +19,7 @@ UPLOAD_WRITE_CHUNK = 1024 * 1024
 
 
 class PayloadTooLarge(Exception):
-    code = "payload_too_large"
+    code = ErrorCode.payload_too_large
 
 
 def _cuda_available() -> bool:

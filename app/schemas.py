@@ -49,8 +49,28 @@ class EngineStatus(str, Enum):
     disabled = "disabled"
 
 
+class ErrorCode(str, Enum):
+    unauthorized = "unauthorized"
+    payload_too_large = "payload_too_large"
+    queue_full = "queue_full"
+    invalid_file = "invalid_file"
+    not_found = "not_found"
+    task_running = "task_running"
+    missing_upload = "missing_upload"
+    ffmpeg_timeout = "ffmpeg_timeout"
+    zero_duration = "zero_duration"
+    pipeline_error = "pipeline_error"
+    engine_unavailable = "engine_unavailable"
+    interrupted = "interrupted"
+    process_killed = "process_killed"
+
+
+def error_payload(code: ErrorCode) -> dict[str, Any]:
+    return {"status": "error", "error": {"code": code.value}}
+
+
 class ErrorDetail(BaseModel):
-    code: str
+    code: ErrorCode
     message: str | None = None
 
 

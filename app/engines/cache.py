@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 import os
 import time
+from collections.abc import Callable
+from enum import Enum
 from pathlib import Path
 
 from app.audio import infer_device
@@ -16,7 +18,7 @@ from app.engines.diarization.nemo import NemoSortformerDiarizer
 from app.engines.diarization.pyannote import PyannoteDiarizer
 from app.engines.stubs import StubASR, StubDiarization
 from app.pipeline import TaskFailed
-from app.schemas import AsrModel, DiarizationModel, EngineStatus
+from app.schemas import AsrModel, DiarizationModel, EngineStatus, ErrorCode
 
 log = logging.getLogger(__name__)
 
@@ -46,6 +48,29 @@ class EngineCache:
         self._diar.clear()
         self.device = "cpu"
 
+    def _preload_engine[K: Enum, E](
+        self,
+        wanted: set[str],
+        slot: dict[K, E | None],
+        key: K,
+        factory: Callable[[], E],
+    ) -> None:
+        name = key.value
+        if name not in wanted:
+            slot[key] = None
+            self.status[name] = EngineStatus.disabled
+            return
+        t0 = time.perf_counter()
+        try:
+            slot[key] = factory()
+            self.status[name] = EngineStatus.loaded
+        except Exception as exc:
+            log.warning("%s preload failed: %s: %s", name, type(exc).__name__, exc)
+            slot[key] = None
+            self.status[name] = EngineStatus.unavailable
+        finally:
+            _observe_preload(name, t0)
+
     def preload(self, settings: Settings) -> None:
         models_dir = str(Path(settings.MODELS_DIR).resolve())
         Path(models_dir).mkdir(parents=True, exist_ok=True)
@@ -67,82 +92,47 @@ class EngineCache:
             dtype,
         )
 
-        if "whisper" in asr_wanted:
-            t0 = time.perf_counter()
-            try:
-                self._asr[AsrModel.whisper] = FasterWhisperASR(
-                    settings.WHISPER_MODEL, models_dir, device=device, compute_type=dtype
-                )
-                self.status["whisper"] = EngineStatus.loaded
-            except Exception as exc:
-                log.warning("whisper preload failed: %s", type(exc).__name__)
-                self._asr[AsrModel.whisper] = None
-                self.status["whisper"] = EngineStatus.unavailable
-            finally:
-                _observe_preload("whisper", t0)
-        else:
-            self._asr[AsrModel.whisper] = None
-            self.status["whisper"] = EngineStatus.disabled
-
-        if "gigaam" in asr_wanted:
-            t0 = time.perf_counter()
-            try:
-                self._asr[AsrModel.gigaam] = GigaAMASR(
-                    settings.GIGAAM_MODEL,
-                    models_dir,
-                    device=device,
-                    hf_token=settings.HF_TOKEN,
-                )
-                self.status["gigaam"] = EngineStatus.loaded
-            except Exception as exc:
-                log.warning("gigaam preload failed: %s", type(exc).__name__)
-                self._asr[AsrModel.gigaam] = None
-                self.status["gigaam"] = EngineStatus.unavailable
-            finally:
-                _observe_preload("gigaam", t0)
-        else:
-            self._asr[AsrModel.gigaam] = None
-            self.status["gigaam"] = EngineStatus.disabled
-
-        if "nemo" in diar_wanted:
-            t0 = time.perf_counter()
-            try:
-                self._diar[DiarizationModel.nemo] = NemoSortformerDiarizer(
-                    settings.NEMO_MODEL,
-                    models_dir,
-                    device=device,
-                    hf_token=settings.HF_TOKEN,
-                )
-                self.status["nemo"] = EngineStatus.loaded
-            except Exception as exc:
-                log.warning("nemo preload failed: %s: %s", type(exc).__name__, exc)
-                self._diar[DiarizationModel.nemo] = None
-                self.status["nemo"] = EngineStatus.unavailable
-            finally:
-                _observe_preload("nemo", t0)
-        else:
-            self._diar[DiarizationModel.nemo] = None
-            self.status["nemo"] = EngineStatus.disabled
-
-        if "pyannote" in diar_wanted:
-            t0 = time.perf_counter()
-            try:
-                self._diar[DiarizationModel.pyannote] = PyannoteDiarizer(
-                    settings.PYANNOTE_MODEL,
-                    models_dir,
-                    hf_token=settings.HF_TOKEN,
-                    device=device,
-                )
-                self.status["pyannote"] = EngineStatus.loaded
-            except Exception as exc:
-                log.warning("pyannote preload failed: %s: %s", type(exc).__name__, exc)
-                self._diar[DiarizationModel.pyannote] = None
-                self.status["pyannote"] = EngineStatus.unavailable
-            finally:
-                _observe_preload("pyannote", t0)
-        else:
-            self._diar[DiarizationModel.pyannote] = None
-            self.status["pyannote"] = EngineStatus.disabled
+        self._preload_engine(
+            asr_wanted,
+            self._asr,
+            AsrModel.whisper,
+            lambda: FasterWhisperASR(
+                settings.WHISPER_MODEL, models_dir, device=device, compute_type=dtype
+            ),
+        )
+        self._preload_engine(
+            asr_wanted,
+            self._asr,
+            AsrModel.gigaam,
+            lambda: GigaAMASR(
+                settings.GIGAAM_MODEL,
+                models_dir,
+                device=device,
+                hf_token=settings.HF_TOKEN,
+            ),
+        )
+        self._preload_engine(
+            diar_wanted,
+            self._diar,
+            DiarizationModel.nemo,
+            lambda: NemoSortformerDiarizer(
+                settings.NEMO_MODEL,
+                models_dir,
+                device=device,
+                hf_token=settings.HF_TOKEN,
+            ),
+        )
+        self._preload_engine(
+            diar_wanted,
+            self._diar,
+            DiarizationModel.pyannote,
+            lambda: PyannoteDiarizer(
+                settings.PYANNOTE_MODEL,
+                models_dir,
+                hf_token=settings.HF_TOKEN,
+                device=device,
+            ),
+        )
 
         self.preloaded = True
 
@@ -151,7 +141,7 @@ class EngineCache:
             return StubASR()
         engine = self._asr.get(model)
         if engine is None:
-            raise TaskFailed("engine_unavailable", f"{model.value} unavailable")
+            raise TaskFailed(ErrorCode.engine_unavailable, f"{model.value} unavailable")
         return engine
 
     def resolve_diarization(self, model: DiarizationModel) -> DiarizationEngine:
@@ -159,7 +149,7 @@ class EngineCache:
             return StubDiarization()
         engine = self._diar.get(model)
         if engine is None:
-            raise TaskFailed("engine_unavailable", f"{model.value} unavailable")
+            raise TaskFailed(ErrorCode.engine_unavailable, f"{model.value} unavailable")
         return engine
 
 

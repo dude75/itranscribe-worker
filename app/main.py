@@ -33,6 +33,7 @@ from app.prometheus_metrics import (
 from app.queueing import QueueFullError, TaskRunner, TaskRunningError
 from app.schemas import (
     AsrModel,
+    ErrorCode,
     ErrorDetail,
     HealthResponse,
     OptionalDiarizationModel,
@@ -42,6 +43,7 @@ from app.schemas import (
     TaskResponse,
     TaskStatus,
     TranscriptLine,
+    error_payload,
 )
 from app.tasks import TaskRecord
 from app.version import read_version
@@ -84,12 +86,16 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="itranscribe-worcker", version=read_version(), lifespan=lifespan)
 
 
-def _api_error(status_code: int, code: str) -> JSONResponse:
+def _api_error(status_code: int, code: ErrorCode) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
-        content={"status": "error", "error": {"code": code}},
+        content=error_payload(code),
         headers={"Connection": "close"},
     )
+
+
+def _http_error(status_code: int, code: ErrorCode) -> HTTPException:
+    return HTTPException(status_code=status_code, detail=error_payload(code))
 
 
 def _transcribe_path(request: Request) -> bool:
@@ -103,7 +109,7 @@ async def gate_transcribe_upload(request: Request, call_next):
     if request.method != "POST" or not _transcribe_path(request):
         return await call_next(request)
     if not api_token_is_valid(request.headers.get("authorization")):
-        return _api_error(status.HTTP_401_UNAUTHORIZED, "unauthorized")
+        return _api_error(status.HTTP_401_UNAUTHORIZED, ErrorCode.unauthorized)
     settings = get_settings()
     raw_cl = request.headers.get("content-length")
     if raw_cl is not None:
@@ -112,11 +118,11 @@ async def gate_transcribe_upload(request: Request, call_next):
         except ValueError:
             size = -1
         if size < 0 or size > settings.MAX_UPLOAD_BYTES:
-            return _api_error(status.HTTP_413_CONTENT_TOO_LARGE, "payload_too_large")
+            return _api_error(status.HTTP_413_CONTENT_TOO_LARGE, ErrorCode.payload_too_large)
     runner = getattr(request.app.state, "runner", None)
     if runner is not None and runner.store.count_queued() >= settings.WORKER_QUEUE_SIZE:
         observe_queue_rejected()
-        return _api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "queue_full")
+        return _api_error(status.HTTP_503_SERVICE_UNAVAILABLE, ErrorCode.queue_full)
     return await call_next(request)
 
 
@@ -201,10 +207,7 @@ async def transcribe(
 ) -> TaskResponse:
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in ALLOWED_SUFFIXES:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"status": "error", "error": {"code": "invalid_file"}},
-        )
+        raise _http_error(status.HTTP_400_BAD_REQUEST, ErrorCode.invalid_file)
     settings = get_settings()
     scratch_dir = Path(settings.DATA_DIR)
     scratch_dir.mkdir(parents=True, exist_ok=True)
@@ -213,19 +216,13 @@ async def transcribe(
         await asyncio.to_thread(
             write_upload_limited, file.file, scratch, settings.MAX_UPLOAD_BYTES
         )
-    except PayloadTooLarge:
-        raise HTTPException(
-            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
-            detail={"status": "error", "error": {"code": "payload_too_large"}},
-        ) from None
+    except PayloadTooLarge as exc:
+        raise _http_error(status.HTTP_413_CONTENT_TOO_LARGE, exc.code) from None
     try:
         record = await runner.submit(scratch, asr_model, diarization_model)
-    except QueueFullError:
+    except QueueFullError as exc:
         observe_queue_rejected()
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"status": "error", "error": {"code": "queue_full"}},
-        ) from None
+        raise _http_error(status.HTTP_503_SERVICE_UNAVAILABLE, exc.code) from None
     finally:
         scratch.unlink(missing_ok=True)
     return _record_to_response(record)
@@ -266,10 +263,7 @@ def get_task(
 ) -> TaskResponse:
     record = runner.store.get(task_id)
     if record is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"status": "error", "error": {"code": "not_found"}},
-        )
+        raise _http_error(status.HTTP_404_NOT_FOUND, ErrorCode.not_found)
     return _record_to_response(record)
 
 
@@ -282,13 +276,7 @@ async def delete_task(
     try:
         await runner.delete(task_id)
     except KeyError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"status": "error", "error": {"code": "not_found"}},
-        ) from None
-    except TaskRunningError:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={"status": "error", "error": {"code": "task_running"}},
-        ) from None
+        raise _http_error(status.HTTP_404_NOT_FOUND, ErrorCode.not_found) from None
+    except TaskRunningError as exc:
+        raise _http_error(status.HTTP_409_CONFLICT, exc.code) from None
     return {"status": "ok"}

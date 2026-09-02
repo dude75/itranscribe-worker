@@ -312,6 +312,47 @@ def test_pipeline_maps_ffmpeg_timeout_to_task_error(
         store.close()
 
 
+def test_run_pipeline_does_not_call_infer_device(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.config import Settings
+    from app.pipeline import run_pipeline
+    from app.schemas import AsrModel, TaskStatus
+    from app.tasks import TaskStore
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("DEVICE=cuda, but CUDA is not available")
+
+    monkeypatch.setattr("app.audio.infer_device", boom)
+
+    db = tmp_path / "tasks.db"
+    store = TaskStore(str(db))
+    settings = Settings(
+        DATA_DIR=str(tmp_path),
+        SQLITE_PATH=str(db),
+        LOG_DIR=str(tmp_path / "logs"),
+        PERFORMANCE_LOG=str(tmp_path / "logs" / "performance_log.csv"),
+        _env_file=None,
+    )
+    store.create(
+        "no-device-task",
+        AsrModel.whisper,
+        None,
+        settings.WHISPER_MODEL,
+        None,
+        str(tmp_path / "missing.wav"),
+    )
+    try:
+        run_pipeline(store, settings, "no-device-task")
+        done = store.get("no-device-task")
+        assert done is not None
+        assert done.status is TaskStatus.error
+        assert done.error is not None
+        assert done.error["code"] == "missing_upload"
+    finally:
+        store.close()
+
+
 def test_write_upload_limited_writes_chunks(tmp_path: Path) -> None:
     dest = tmp_path / "out.bin"
     written = write_upload_limited(io.BytesIO(b"abc"), dest, 10)
