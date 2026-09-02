@@ -83,5 +83,49 @@ def test_utterances_from_words_no_speaker() -> None:
     assert result[0].end == 0.4
 
 
+def test_utterances_from_words_split_on_segment_id() -> None:
+    words = [
+        Word(start=0.0, end=0.2, text="привет", segment_id=0),
+        Word(start=0.2, end=0.4, text="мир", segment_id=0),
+        Word(start=1.0, end=1.2, text="пока", segment_id=1),
+    ]
+    result = utterances_from_words(words)
+    assert [u.text for u in result] == ["привет мир", "пока"]
+    assert all(u.speaker is None for u in result)
+    assert result[0].start == 0.0
+    assert result[0].end == 0.4
+    assert result[1].start == 1.0
+    assert result[1].end == 1.2
+
+
+def test_align_splits_same_speaker_on_segment_id() -> None:
+    words = [
+        Word(start=0.0, end=0.2, text="раз", segment_id=0),
+        Word(start=0.2, end=0.4, text="два", segment_id=0),
+        Word(start=1.0, end=1.2, text="три", segment_id=1),
+    ]
+    segments = [DiarizationSegment(start=0.0, end=2.0, speaker="A")]
+    result = align(words, segments)
+    assert len(result) == 2
+    assert result[0].speaker == "speaker_0"
+    assert result[1].speaker == "speaker_0"
+    assert result[0].text == "раз два"
+    assert result[1].text == "три"
+
+
+def test_align_speaker_change_inside_same_segment() -> None:
+    words = [
+        Word(start=0.0, end=0.2, text="я", segment_id=0),
+        Word(start=0.5, end=0.7, text="ты", segment_id=0),
+    ]
+    segments = [
+        DiarizationSegment(start=0.0, end=0.3, speaker="A"),
+        DiarizationSegment(start=0.4, end=1.0, speaker="B"),
+    ]
+    result = align(words, segments)
+    assert [u.speaker for u in result] == ["speaker_0", "speaker_1"]
+    assert [u.text for u in result] == ["я", "ты"]
+
+
 def test_utterances_from_words_empty() -> None:
     assert utterances_from_words([]) == []

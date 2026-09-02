@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.audio import infer_device
-from app.engines.base import Word
+from app.engines.base import Word, words_from_asr_segments
 
 
 class FasterWhisperASR:
@@ -33,20 +33,4 @@ class FasterWhisperASR:
             wav_path,
             word_timestamps=True,
         )
-        out: list[Word] = []
-        for segment in segments:
-            if segment.words:
-                for word in segment.words:
-                    text = (word.word or "").strip()
-                    if not text:
-                        continue
-                    out.append(
-                        Word(start=float(word.start), end=float(word.end), text=text)
-                    )
-                continue
-            text = (segment.text or "").strip()
-            if text:
-                out.append(
-                    Word(start=float(segment.start), end=float(segment.end), text=text)
-                )
-        return out
+        return words_from_asr_segments(segments)

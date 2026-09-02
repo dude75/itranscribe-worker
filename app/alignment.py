@@ -42,18 +42,38 @@ def _canonical_names(labels: Sequence[str]) -> list[str]:
     return result
 
 
-def utterances_from_words(words: Sequence[Word]) -> list[Utterance]:
-    """Транскрипт без диаризации: все слова одной репликой, спикер не назначается."""
+def _utterance(buf: Sequence[Word], speaker: str | None) -> Utterance:
+    return Utterance(
+        speaker=speaker,
+        start=buf[0].start,
+        end=buf[-1].end,
+        text=" ".join(word.text for word in buf),
+    )
+
+
+def _group(words: Sequence[Word], speakers: Sequence[str | None]) -> list[Utterance]:
+    """Реплики по смене спикера или ASR-сегмента. Подряд идущие None не режут."""
     if not words:
         return []
-    return [
-        Utterance(
-            speaker=None,
-            start=words[0].start,
-            end=words[-1].end,
-            text=" ".join(word.text for word in words),
-        )
-    ]
+    utterances: list[Utterance] = []
+    buf: list[Word] = [words[0]]
+    current_speaker = speakers[0]
+    current_segment = words[0].segment_id
+    for word, speaker in zip(words[1:], speakers[1:], strict=True):
+        if speaker == current_speaker and word.segment_id == current_segment:
+            buf.append(word)
+            continue
+        utterances.append(_utterance(buf, current_speaker))
+        buf = [word]
+        current_speaker = speaker
+        current_segment = word.segment_id
+    utterances.append(_utterance(buf, current_speaker))
+    return utterances
+
+
+def utterances_from_words(words: Sequence[Word]) -> list[Utterance]:
+    """Транскрипт без диаризации: реплики по ASR-сегментам, спикер не назначается."""
+    return _group(words, [None] * len(words))
 
 
 def align(words: Sequence[Word], segments: Sequence[DiarizationSegment]) -> list[Utterance]:
@@ -62,30 +82,4 @@ def align(words: Sequence[Word], segments: Sequence[DiarizationSegment]) -> list
 
     raw_speakers = [_speaker_for_word(word, segments) for word in words]
     speakers = _canonical_names(raw_speakers)
-
-    utterances: list[Utterance] = []
-    buf: list[Word] = [words[0]]
-    current = speakers[0]
-    for word, speaker in zip(words[1:], speakers[1:], strict=True):
-        if speaker == current:
-            buf.append(word)
-            continue
-        utterances.append(
-            Utterance(
-                speaker=current,
-                start=buf[0].start,
-                end=buf[-1].end,
-                text=" ".join(w.text for w in buf),
-            )
-        )
-        buf = [word]
-        current = speaker
-    utterances.append(
-        Utterance(
-            speaker=current,
-            start=buf[0].start,
-            end=buf[-1].end,
-            text=" ".join(w.text for w in buf),
-        )
-    )
-    return utterances
+    return _group(words, speakers)

@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.audio import infer_device
-from app.engines.base import Word
+from app.engines.base import Word, words_from_asr_segments
 
 
 class GigaAMASR:
@@ -43,24 +43,4 @@ class GigaAMASR:
     def words(self, wav_path: str) -> list[Word]:
         result = self._model.transcribe_longform(wav_path, word_timestamps=True)
         segments = getattr(result, "segments", result)
-        out: list[Word] = []
-        for segment in segments:
-            words = getattr(segment, "words", None)
-            if words:
-                for word in words:
-                    text = (word.text or "").strip()
-                    if text:
-                        out.append(
-                            Word(start=float(word.start), end=float(word.end), text=text)
-                        )
-                continue
-            text = (getattr(segment, "text", None) or "").strip()
-            if text:
-                out.append(
-                    Word(
-                        start=float(segment.start),
-                        end=float(segment.end),
-                        text=text,
-                    )
-                )
-        return out
+        return words_from_asr_segments(segments)

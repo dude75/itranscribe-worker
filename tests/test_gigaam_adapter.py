@@ -48,6 +48,33 @@ def test_gigaam_constructor_warms_vad(
     assert warmed == ["cpu"]
 
 
+def test_gigaam_words_preserve_segment_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fake_gigaam_modules(monkeypatch, lambda _device: object())
+    engine = GigaAMASR(
+        "multilingual_large_ctc", str(tmp_path), hf_token="token", device="cpu"
+    )
+
+    class _Word:
+        def __init__(self, start: float, end: float, text: str) -> None:
+            self.start = start
+            self.end = end
+            self.text = text
+
+    class _Segment:
+        def __init__(self, words: list[_Word]) -> None:
+            self.words = words
+
+    engine._model.transcribe_longform = lambda *_a, **_k: [
+        _Segment([_Word(0.0, 0.2, "a"), _Word(0.2, 0.4, "b")]),
+        _Segment([_Word(1.0, 1.2, "c")]),
+    ]
+    words = engine.words("x.wav")
+    assert [w.text for w in words] == ["a", "b", "c"]
+    assert [w.segment_id for w in words] == [0, 0, 1]
+
+
 def test_gigaam_constructor_fails_if_vad_unavailable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
