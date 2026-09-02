@@ -2,7 +2,7 @@
 #   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
 #
 # Host needs NVIDIA driver + nvidia-container-toolkit.
-# CUDA 12.6 runtime; driver should be recent enough for CUDA 12.x.
+# CUDA 12.9.2 runtime; driver should be recent enough for CUDA 12.x.
 
 services:
   itranscribe:

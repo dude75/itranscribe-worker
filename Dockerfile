@@ -1,5 +1,5 @@
 # TARGET=cpu — slim Python, CPU wheels of torch.
-# TARGET=gpu — NVIDIA CUDA 12.6 + cu126 torch (needs nvidia-container-toolkit at run).
+# TARGET=gpu — NVIDIA CUDA 12.9.2 + cu129 torch (needs nvidia-container-toolkit at run).
 ARG TARGET=cpu
 
 FROM python:3.12-slim-bookworm AS cpu-base
