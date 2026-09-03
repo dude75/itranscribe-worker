@@ -16,6 +16,7 @@ from app.engines.asr.whisper import FasterWhisperASR
 from app.engines.base import ASREngine, DiarizationEngine
 from app.engines.diarization.nemo import NemoSortformerDiarizer
 from app.engines.diarization.pyannote import PyannoteDiarizer
+from app.engines.hf_offline import huggingface_offline, looks_like_missing_cache
 from app.engines.stubs import StubASR, StubDiarization
 from app.pipeline import TaskFailed
 from app.schemas import AsrModel, DiarizationModel, EngineStatus, ErrorCode
@@ -67,8 +68,13 @@ class EngineCache:
         copies: list[E | None] = []
         t0 = time.perf_counter()
         try:
-            for _ in range(replicas):
-                copies.append(factory())
+            for index in range(replicas):
+                if index == 0:
+                    copies.append(_replica_zero(name, factory))
+                else:
+                    with huggingface_offline():
+                        copies.append(factory())
+                    log.info("%s replica %s loaded from local cache", name, index)
         except Exception as exc:
             log.warning("%s preload failed: %s: %s", name, type(exc).__name__, exc)
             slot[key] = empty
@@ -173,6 +179,19 @@ def _replica[E](replicas: list[E | None] | None, slot: int) -> E | None:
     if replicas is None or slot < 0 or slot >= len(replicas):
         return None
     return replicas[slot]
+
+
+def _replica_zero[E](name: str, factory: Callable[[], E]) -> E:
+    try:
+        with huggingface_offline():
+            engine = factory()
+    except Exception as exc:
+        if not looks_like_missing_cache(exc):
+            raise
+        log.info("%s replica 0 not in local cache, downloading", name)
+        return factory()
+    log.info("%s replica 0 loaded from local cache", name)
+    return engine
 
 
 _cache = EngineCache()

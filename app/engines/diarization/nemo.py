@@ -8,6 +8,7 @@ from typing import Any
 
 from app.audio import infer_device
 from app.engines.base import DiarizationSegment
+from app.engines.hf_offline import call_with_local_files_only
 
 # Streaming Sortformer, высокая латентность ≈ офлайн-батч (карточка модели, окно ~30 с).
 _STREAMING_OFFLINE = {
@@ -121,7 +122,8 @@ class NemoSortformerDiarizer:
         import torch
 
         try:
-            model = sortformer_cls.from_pretrained(
+            model = call_with_local_files_only(
+                sortformer_cls.from_pretrained,
                 model_name,
                 map_location=torch.device(device),
                 strict=False,

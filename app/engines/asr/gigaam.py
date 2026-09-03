@@ -6,6 +6,7 @@ from pathlib import Path
 
 from app.audio import infer_device
 from app.engines.base import Word, words_from_asr_segments
+from app.engines.hf_offline import call_with_local_files_only
 
 
 class GigaAMASR:
@@ -30,7 +31,8 @@ class GigaAMASR:
         if device is None:
             device, _dtype = infer_device()
         Path(models_dir).mkdir(parents=True, exist_ok=True)
-        self._model = gigaam.load_model(
+        self._model = call_with_local_files_only(
+            gigaam.load_model,
             model_name,
             device=device,
             download_root=str(models_dir),

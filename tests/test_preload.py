@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 import pytest
@@ -213,6 +214,105 @@ def test_preload_workers_builds_independent_replicas(
     with pytest.raises(TaskFailed) as exc:
         cache.resolve_asr(AsrModel.whisper, 2)
     assert exc.value.code is ErrorCode.engine_unavailable
+
+
+def _cache_aware(name: str, downloaded: dict[str, bool], events: list[tuple[str, bool]]):
+    class Engine:
+        def __init__(self, *args, **kwargs) -> None:
+            offline = os.environ.get("HF_HUB_OFFLINE") == "1"
+            events.append((name, offline))
+            if offline and not downloaded[name]:
+                raise RuntimeError(
+                    "Cannot find an appropriate cached snapshot folder for the specified revision"
+                )
+            if not offline:
+                downloaded[name] = True
+
+    return Engine
+
+
+def test_preload_replica_zero_downloads_then_rest_use_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
+    events: list[tuple[str, bool]] = []
+    downloaded = {"whisper": False, "nemo": False, "gigaam": False, "pyannote": False}
+    monkeypatch.setattr(
+        "app.engines.cache.FasterWhisperASR", _cache_aware("whisper", downloaded, events)
+    )
+    monkeypatch.setattr(
+        "app.engines.cache.NemoSortformerDiarizer", _cache_aware("nemo", downloaded, events)
+    )
+    monkeypatch.setattr("app.engines.cache.GigaAMASR", _spy("gigaam", []))
+    monkeypatch.setattr("app.engines.cache.PyannoteDiarizer", _spy("pyannote", []))
+    monkeypatch.setattr(
+        "app.engines.cache.infer_device", lambda *_args, **_kwargs: ("cpu", "float32")
+    )
+
+    settings = Settings(
+        PRELOAD_ASR="whisper",
+        PRELOAD_DIARIZATION="nemo",
+        WORKERS=2,
+        MODELS_DIR=str(tmp_path),
+        HF_TOKEN="token",
+        _env_file=None,
+    )
+    EngineCache().preload(settings)
+
+    assert events == [
+        ("whisper", True),
+        ("whisper", False),
+        ("whisper", True),
+        ("nemo", True),
+        ("nemo", False),
+        ("nemo", True),
+    ]
+    assert downloaded == {
+        "whisper": True,
+        "nemo": True,
+        "gigaam": False,
+        "pyannote": False,
+    }
+    assert os.environ.get("HF_HUB_OFFLINE") != "1"
+
+
+def test_preload_uses_cache_for_every_replica_when_already_downloaded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
+    events: list[tuple[str, bool]] = []
+    downloaded = {"whisper": True, "nemo": True, "gigaam": False, "pyannote": False}
+    monkeypatch.setattr(
+        "app.engines.cache.FasterWhisperASR", _cache_aware("whisper", downloaded, events)
+    )
+    monkeypatch.setattr(
+        "app.engines.cache.NemoSortformerDiarizer", _cache_aware("nemo", downloaded, events)
+    )
+    monkeypatch.setattr("app.engines.cache.GigaAMASR", _spy("gigaam", []))
+    monkeypatch.setattr("app.engines.cache.PyannoteDiarizer", _spy("pyannote", []))
+    monkeypatch.setattr(
+        "app.engines.cache.infer_device", lambda *_args, **_kwargs: ("cpu", "float32")
+    )
+
+    settings = Settings(
+        PRELOAD_ASR="whisper",
+        PRELOAD_DIARIZATION="nemo",
+        WORKERS=2,
+        MODELS_DIR=str(tmp_path),
+        HF_TOKEN="token",
+        _env_file=None,
+    )
+    EngineCache().preload(settings)
+
+    assert events == [
+        ("whisper", True),
+        ("whisper", True),
+        ("nemo", True),
+        ("nemo", True),
+    ]
+    assert os.environ.get("HF_HUB_OFFLINE") != "1"
 
 
 def test_preload_failure_logs_exception_for_every_family(

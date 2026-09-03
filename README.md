@@ -43,7 +43,7 @@ Create a `.env` in the repo root (see table below). Do not commit it. Then:
 
 Always keep **uvicorn** `--workers 1`. Parallelism of jobs is `WORKERS` in `.env` (slots inside this one process), not extra uvicorn processes.
 
-First start **preloads** the families chosen by `PRELOAD_ASR` and `PRELOAD_DIARIZATION` (default `all` = all four). Weights for skipped families are not downloaded. A failed engine is `unavailable`; a skipped one is `disabled`. The process stays up. The first real task should not download weights again if they already sit in `./data/models`.
+First start **preloads** the families chosen by `PRELOAD_ASR` and `PRELOAD_DIARIZATION` (default `all` = all four). For each family the first replica uses `MODELS_DIR` if the weights are already there, otherwise it downloads from Hugging Face; the remaining `WORKERS` replicas of that family load only from that cache (no Hub etag). Weights for skipped families are not downloaded. A failed engine is `unavailable`; a skipped one is `disabled`. The process stays up. The first real task should not download weights again if they already sit in `./data/models`.
 
 Check:
 

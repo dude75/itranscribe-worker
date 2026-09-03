@@ -6,6 +6,7 @@ from pathlib import Path
 
 from app.audio import infer_device
 from app.engines.base import Word, words_from_asr_segments
+from app.engines.hf_offline import huggingface_offline_enabled
 
 
 class FasterWhisperASR:
@@ -26,6 +27,7 @@ class FasterWhisperASR:
             device=device,
             compute_type=compute_type,
             download_root=str(models_dir),
+            local_files_only=huggingface_offline_enabled(),
         )
 
     def words(self, wav_path: str) -> list[Word]:

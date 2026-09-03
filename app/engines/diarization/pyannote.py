@@ -8,6 +8,7 @@ from typing import Any
 
 from app.audio import infer_device
 from app.engines.base import DiarizationSegment
+from app.engines.hf_offline import call_with_local_files_only
 
 log = logging.getLogger(__name__)
 
@@ -91,7 +92,8 @@ class PyannoteDiarizer:
         if device is None:
             device, _dtype = infer_device()
         Path(models_dir).mkdir(parents=True, exist_ok=True)
-        pipeline = Pipeline.from_pretrained(
+        pipeline = call_with_local_files_only(
+            Pipeline.from_pretrained,
             model_name,
             token=hf_token,
             cache_dir=str(models_dir),
