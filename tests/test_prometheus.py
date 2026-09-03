@@ -80,6 +80,16 @@ def _wait_task(client: TestClient, task_id: str) -> dict:
 
 def test_metrics_without_token(client: TestClient) -> None:
     response = client.get("/metrics")
+    assert response.status_code == 401
+
+
+def test_metrics_rejects_bad_token(client: TestClient) -> None:
+    response = client.get("/metrics", headers={"Authorization": "Bearer not-the-token"})
+    assert response.status_code == 401
+
+
+def test_metrics_with_token(client: TestClient) -> None:
+    response = client.get("/metrics", headers=_auth_headers())
     assert response.status_code == 200
     assert "text/plain" in response.headers["content-type"]
     body = response.text
@@ -88,12 +98,6 @@ def test_metrics_without_token(client: TestClient) -> None:
     assert _sample(body, "itranscribe_queue_depth") == 0.0
     assert _sample(body, "itranscribe_worker_slots") == 1.0
     assert _sample(body, "itranscribe_queue_limit") == 1.0
-
-
-def test_metrics_ignores_bad_token(client: TestClient) -> None:
-    response = client.get("/metrics", headers={"Authorization": "Bearer not-the-token"})
-    assert response.status_code == 200
-    assert _sample(response.text, "itranscribe_up") == 1.0
 
 
 def test_health_still_public_tasks_still_auth(client: TestClient) -> None:
@@ -108,7 +112,7 @@ def test_submitted_and_completed_success(client: TestClient, wav_bytes: tuple[st
     payload = _wait_task(client, task_id)
     assert payload["status"] == "success"
 
-    body = client.get("/metrics").text
+    body = client.get("/metrics", headers=_auth_headers()).text
     labels = {"asr_model": "whisper", "diarization_model": "none"}
     assert _sample(body, "itranscribe_tasks_submitted_total", labels) == 1.0
     assert (
@@ -148,7 +152,7 @@ def test_queue_full_increments_rejected(client: TestClient, wav_bytes: tuple[str
         assert second.status_code == 202
         third = _post_transcribe(client, wav_bytes)
         assert third.status_code == 503
-        body = client.get("/metrics").text
+        body = client.get("/metrics", headers=_auth_headers()).text
         assert _sample(body, "itranscribe_queue_rejected_total") == 1.0
         assert "itranscribe_queue_rejected_total" in body
     finally:
@@ -162,7 +166,7 @@ def test_http_path_uses_template_not_uuid(
     created = _post_transcribe(client, wav_bytes)
     task_id = created.json()["meta"]["task_id"]
     _wait_task(client, task_id)
-    body = client.get("/metrics").text
+    body = client.get("/metrics", headers=_auth_headers()).text
     assert "/tasks/{task_id}" in body
     for line in body.splitlines():
         if 'path="' in line:
@@ -195,7 +199,7 @@ def test_metrics_disabled_does_not_break_transcribe(
         created = _post_transcribe(test_client, wav_bytes)
         assert created.status_code == 202
         _wait_task(test_client, created.json()["meta"]["task_id"])
-        response = test_client.get("/metrics")
+        response = test_client.get("/metrics", headers=_auth_headers())
         assert response.status_code == 200
         assert _sample(response.text, "itranscribe_queue_depth") is None
         assert _sample(response.text, "itranscribe_tasks_submitted_total") is None

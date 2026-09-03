@@ -193,7 +193,7 @@ def health() -> HealthResponse:
 
 
 @app.get("/metrics")
-def metrics() -> Response:
+def metrics(_: str = Depends(require_api_token)) -> Response:
     return Response(content=render(), media_type=CONTENT_TYPE)
 
 

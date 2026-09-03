@@ -60,7 +60,7 @@ Docker: [Docker Compose](#docker-compose) (образы CPU или NVIDIA GPU).
 
 | Переменная                | Смысл                                                                                                                                                                                                                                                |
 | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `API_TOKEN`               | Bearer-ключ для всех маршрутов, кроме `/health` и `/metrics`. Пустой = никто не пройдёт. Не путать с `HF_TOKEN`.                                                                                                                             |
+| `API_TOKEN`               | Bearer-ключ для всех маршрутов, кроме `/health`. Пустой = никто не пройдёт. Не путать с `HF_TOKEN`.                                                                                                                                          |
 | `HF_TOKEN`                | Токен Hugging Face: скачать PyAnnote, VAD для GigaAM longform и чекпоинт NeMo Sortformer.                                                                                                                                                            |
 | `HOST`                    | Интерфейс (`127.0.0.1` локально; в Docker — `0.0.0.0`).                                                                                                                                                                                              |
 | `PORT`                    | HTTP-порт (по умолчанию `8000`).                                                                                                                                                                                                                     |
@@ -100,7 +100,7 @@ Docker: [Docker Compose](#docker-compose) (образы CPU или NVIDIA GPU).
 
 ## API
 
-Все маршруты, кроме `GET /health` и `GET /metrics`, требуют:
+Все маршруты, кроме `GET /health`, требуют:
 
 `Authorization: Bearer <API_TOKEN>`
 
@@ -114,13 +114,13 @@ curl -s "$HOST/health"
 
 В JSON — `version` (как в `version.txt`) и какие движки `loaded`, `unavailable` или `disabled` (без секретов). `disabled` — семейство не входило в `PRELOAD_ASR` / `PRELOAD_DIARIZATION`. Поле `device` — `cpu` или `cuda`.
 
-### Метрики (без токена)
+### Метрики
 
 ```bash
-curl -s "$HOST/metrics"
+curl -s -H "Authorization: Bearer $TOKEN" "$HOST/metrics"
 ```
 
-Текст Prometheus. Process collectors и прикладные gauges/counters/histograms (очередь, движки, тайминги задач). Без авторизации.
+Текст Prometheus. Process collectors и прикладные gauges/counters/histograms (очередь, движки, тайминги задач). Тот же Bearer, что и у остального API.
 
 Grafana: импорт [`grafana/dashboards/itranscribe-worker.json`](grafana/dashboards/itranscribe-worker.json) (Dashboards → New → Import), datasource — Prometheus, который скрейпит этот endpoint. Пример scrape:
 
@@ -129,6 +129,8 @@ scrape_configs:
   - job_name: itranscribe-worker
     metrics_path: /metrics
     scrape_interval: 15s
+    authorization:
+      credentials: "<API_TOKEN>"
     static_configs:
       - targets: ["127.0.0.1:8000"]
 ```

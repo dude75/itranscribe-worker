@@ -60,7 +60,7 @@ Copy names into `.env`. **Do not put real tokens in git or in this README.** Cha
 
 | Variable                  | Meaning                                                                                                                                                                                                                                     |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `API_TOKEN`               | Bearer key for all routes except `/health` and `/metrics`. Empty = nobody is authorized. Not the same as `HF_TOKEN`.                                                                                                                        |
+| `API_TOKEN`               | Bearer key for all routes except `/health`. Empty = nobody is authorized. Not the same as `HF_TOKEN`.                                                                                                                                        |
 | `HF_TOKEN`                | Hugging Face token: download PyAnnote, VAD used by GigaAM longform, and the NeMo Sortformer checkpoint.                                                                                                                                     |
 | `HOST`                    | Bind address (`127.0.0.1` locally; Docker uses `0.0.0.0`).                                                                                                                                                                                  |
 | `PORT`                    | HTTP port (default `8000`).                                                                                                                                                                                                                 |
@@ -100,7 +100,7 @@ After a process restart (or `docker compose restart`) unfinished work is restore
 
 ## API
 
-All routes except `GET /health` and `GET /metrics` require:
+All routes except `GET /health` require:
 
 `Authorization: Bearer <API_TOKEN>`
 
@@ -114,13 +114,13 @@ curl -s "$HOST/health"
 
 JSON includes `version` (same as `version.txt`), which engines are `loaded`, `unavailable`, or `disabled` (no secrets). `disabled` means the family was left out of `PRELOAD_ASR` / `PRELOAD_DIARIZATION`. `device` is `cpu` or `cuda`.
 
-### Metrics (no token)
+### Metrics
 
 ```bash
-curl -s "$HOST/metrics"
+curl -s -H "Authorization: Bearer $TOKEN" "$HOST/metrics"
 ```
 
-Prometheus text format. Process collectors plus application gauges/counters/histograms (queue, engines, task timings). Not authenticated.
+Prometheus text format. Process collectors plus application gauges/counters/histograms (queue, engines, task timings). Same Bearer as the rest of the API.
 
 Grafana: import [`grafana/dashboards/itranscribe-worker.json`](grafana/dashboards/itranscribe-worker.json) (Dashboards → New → Import) and pick the Prometheus that scrapes this endpoint. Example scrape:
 
@@ -129,6 +129,8 @@ scrape_configs:
   - job_name: itranscribe-worker
     metrics_path: /metrics
     scrape_interval: 15s
+    authorization:
+      credentials: "<API_TOKEN>"
     static_configs:
       - targets: ["127.0.0.1:8000"]
 ```
