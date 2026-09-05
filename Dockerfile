@@ -64,7 +64,14 @@ RUN python3 -m venv /opt/venv \
 COPY version.txt ./
 COPY app ./app
 
+RUN groupadd --gid 1001 app \
+    && useradd --create-home --no-log-init --uid 1001 --gid 1001 \
+        --shell /usr/sbin/nologin app \
+    && mkdir -p /data
+
 EXPOSE 8000
 VOLUME ["/data"]
+
+USER 1001:1001
 
 CMD ["sh", "-c", "uvicorn app.main:app --host ${HOST:-0.0.0.0} --port ${PORT:-8000} --workers 1"]

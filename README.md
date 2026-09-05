@@ -90,7 +90,7 @@ Copy names into `.env`. **Do not put real tokens in git or in this README.** Cha
 | `TASK_MAX_RESTARTS`       | How many times a task found `running` after a process death may be put back in `queued`. Default `1` (one retry). After that: `error` with `process_killed`. `0` = fail on the first restore. CUDA OOM is a caught Python exception (`pipeline_error`) and does not count. |
 
 
-Everything that must survive a restart lives under `./data` (models, `tasks.db`, logs, **and queue tmp** `{DATA_DIR}/tmp/`). Mount that directory in Docker.
+Everything that must survive a restart lives under `./data` (models, `tasks.db`, logs, **and queue tmp** `{DATA_DIR}/tmp/`). Mount that directory in Docker. The Compose container writes it as uid/gid **1001** (see [Docker Compose](#docker-compose)).
 
 After a process restart (or `docker compose restart`) unfinished work is restored from SQLite + those tmp files — **not** resumed mid-pipeline:
 
@@ -232,6 +232,14 @@ Two images from the same `Dockerfile`: **CPU** (`itranscribe-worker:cpu`) and **
 
 1. Copy `.env.example` → `.env` and fill `API_TOKEN` / `HF_TOKEN` (see `[.env](#env)`).
 2. Create `./data` if it does not exist (weights, SQLite, logs, queue tmp). Compose mounts `./data:/data`.
+   The container process runs as **uid/gid 1001** (not root). That user must be able to write `./data`.
+   If this directory already exists from an older root-owned container, fix ownership once:
+
+   ```bash
+   sudo chown -R 1001:1001 ./data
+   ```
+
+   Do not chmod `777`. `docker compose down` does not delete `./data`.
 3. **GPU only:** NVIDIA driver on the host and [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html). Check: `nvidia-smi` and `docker run --rm --gpus all nvidia/cuda:12.9.2-base-ubuntu24.04 nvidia-smi`.
 
 
@@ -259,7 +267,7 @@ docker compose down
 docker compose -f docker-compose.yml -f docker-compose.gpu.yml down
 ```
 
-`./data` on the host is not deleted.
+`./data` on the host is not deleted. After switching from a root-owned image, run `sudo chown -R 1001:1001 ./data` before the next `up` if logs show `Permission denied` on `/data`.
 
 ## Typical errors
 
@@ -276,5 +284,6 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml down
 | HTTP **200**, `status=error`, `error.code = ffmpeg_timeout`     | ffmpeg did not finish normalizing the upload to mono 16 kHz WAV within `FFMPEG_TIMEOUT_SEC`. The converter process is killed; the worker slot is freed. |
 | HTTP **200**, `status=error`, `error.code = task_timeout`       | The task did not finish within `TASK_TIMEOUT_SEC` (default 4 hours). Remaining stages are skipped; the worker slot is freed after the current stage returns. |
 | HTTP **422**                                                    | Invalid `asr_model` / `diarization_model` (`whisper`/`gigaam`; `nemo`/`pyannote`). Empty `diarization_model` is valid (skip diarization). |
+| `Permission denied` on `/data/...` (`tasks.db`, `models`, `logs`, `tmp`) | Host `./data` is not writable by uid 1001. Run `sudo chown -R 1001:1001 ./data` and restart. Do not chmod `777`. |
 
 

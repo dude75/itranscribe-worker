@@ -9,6 +9,7 @@ services:
         TARGET: cpu
         DEVICE: cpu
         TORCH_INDEX_URL: https://download.pytorch.org/whl/cpu
+    user: "1001:1001"
     ports:
       - "8000:8000"
     env_file:

@@ -90,7 +90,7 @@ Docker: [Docker Compose](#docker-compose) (образы CPU или NVIDIA GPU).
 | `TASK_MAX_RESTARTS`       | Сколько раз задачу, найденную в `running` после смерти процесса, вернуть в `queued`. По умолчанию `1` (одна повторная попытка). Дальше — `error` с кодом `process_killed`. `0` — сразу ошибка при первом restore. CUDA OOM — обычное Python-исключение (`pipeline_error`), в этот счётчик не входит. |
 
 
-Всё, что должно пережить рестарт, лежит в `./data` (модели, `tasks.db`, логи **и tmp очереди** `{DATA_DIR}/tmp/`). В Docker монтируйте этот каталог.
+Всё, что должно пережить рестарт, лежит в `./data` (модели, `tasks.db`, логи **и tmp очереди** `{DATA_DIR}/tmp/`). В Docker монтируйте этот каталог. Контейнер Compose пишет в него от uid/gid **1001** (см. [Docker Compose](#docker-compose)).
 
 После рестарта процесса (или `docker compose restart`) незавершённые задачи восстанавливаются из SQLite и этих tmp-файлов — **не** с середины пайплайна:
 
@@ -232,6 +232,14 @@ JSON **200**:
 
 1. Скопируйте `.env.example` → `.env` и заполните `API_TOKEN` / `HF_TOKEN` (см. `[.env](#env)`).
 2. Каталог `./data` (веса, SQLite, логи, tmp очереди). Compose монтирует `./data:/data`.
+   Процесс в контейнере идёт как **uid/gid 1001** (не root). Этому пользователю нужна запись в `./data`.
+   Если каталог уже заполнял старый контейнер от root, один раз поправьте владельца:
+
+   ```bash
+   sudo chown -R 1001:1001 ./data
+   ```
+
+   Не ставьте `chmod 777`. `docker compose down` каталог `./data` не удаляет.
 3. **Только GPU:** драйвер NVIDIA на хосте и [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html). Проверка: `nvidia-smi` и `docker run --rm --gpus all nvidia/cuda:12.9.2-base-ubuntu24.04 nvidia-smi`.
 
 
@@ -259,7 +267,7 @@ docker compose down
 docker compose -f docker-compose.yml -f docker-compose.gpu.yml down
 ```
 
-Каталог `./data` на хосте не удаляется.
+Каталог `./data` на хосте не удаляется. После перехода с образа от root выполните `sudo chown -R 1001:1001 ./data` перед следующим `up`, если в логах `Permission denied` на `/data`.
 
 ## Типичные ошибки
 
@@ -276,5 +284,6 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml down
 | HTTP **200**, `status=error`, `error.code = ffmpeg_timeout`     | ffmpeg не успел нормализовать загрузку в моно 16 кГц WAV за `FFMPEG_TIMEOUT_SEC`. Процесс конвертера убивается, слот воркера освобождается.        |
 | HTTP **200**, `status=error`, `error.code = task_timeout`       | Задача не уложилась в `TASK_TIMEOUT_SEC` (по умолчанию 4 часа). Следующие этапы не стартуют; слот воркера освобождается, когда текущий этап вернётся. |
 | HTTP **422**                                                    | Неверный `asr_model` / `diarization_model` (`whisper`/`gigaam`; `nemo`/`pyannote`). Пустой `diarization_model` допустим (без диаризации).        |
+| `Permission denied` на `/data/...` (`tasks.db`, `models`, `logs`, `tmp`) | Хостовый `./data` недоступен uid 1001. Выполните `sudo chown -R 1001:1001 ./data` и перезапустите. Не ставьте `chmod 777`. |
 
 
