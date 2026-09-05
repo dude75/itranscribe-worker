@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     MAX_UPLOAD_BYTES: int = 1024 ** 3
     TASK_TTL_SEC: int = 3600
     FFMPEG_TIMEOUT_SEC: int = 120
+    TASK_TIMEOUT_SEC: int = 14400
     TASK_MAX_RESTARTS: int = 1
 
     @field_validator("PRELOAD_ASR", "PRELOAD_DIARIZATION", "DEVICE", mode="before")
@@ -61,6 +62,13 @@ class Settings(BaseSettings):
     def _non_negative_restarts(cls, value: int) -> int:
         if value < 0:
             raise ValueError("TASK_MAX_RESTARTS must be >= 0")
+        return value
+
+    @field_validator("TASK_TIMEOUT_SEC")
+    @classmethod
+    def _non_negative_task_timeout(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("TASK_TIMEOUT_SEC must be >= 0")
         return value
 
     @field_validator("MAX_UPLOAD_BYTES")

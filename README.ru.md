@@ -86,6 +86,7 @@ Docker: [Docker Compose](#docker-compose) (образы CPU или NVIDIA GPU).
 | `MAX_UPLOAD_BYTES`        | Максимум тела `POST /transcribe` в байтах (`Content-Length` и стрим файла). По умолчанию `1073741824` (1 GiB). Сверх лимита: HTTP **413** `payload_too_large`.                                                                                        |
 | `TASK_TTL_SEC`            | Через сколько секунд после `success`/`error` удалить строку из SQLite. `0` — не удалять по TTL (только `DELETE`).                                                                                                                                    |
 | `FFMPEG_TIMEOUT_SEC`      | Сколько секунд дать ffmpeg на нормализацию любой загрузки (WAV/MP3/M4A) в моно 16 кГц WAV. По умолчанию `120`. По таймауту задача уходит в `error` с кодом `ffmpeg_timeout`, процесс ffmpeg убивается. `0` — без лимита.                               |
+| `TASK_TIMEOUT_SEC`        | Сколько секунд дать всей задаче (ffmpeg + ASR + диаризация + alignment). По умолчанию `14400` (4 часа). По таймауту задача уходит в `error` с кодом `task_timeout`; текущий этап доигрывается, следующие не стартуют. Нативный инференс посреди вызова не прерывается. `0` — без лимита. |
 | `TASK_MAX_RESTARTS`       | Сколько раз задачу, найденную в `running` после смерти процесса, вернуть в `queued`. По умолчанию `1` (одна повторная попытка). Дальше — `error` с кодом `process_killed`. `0` — сразу ошибка при первом restore. CUDA OOM — обычное Python-исключение (`pipeline_error`), в этот счётчик не входит. |
 
 
@@ -273,6 +274,7 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml down
 | HTTP **200**, `status=error`, `error.code = interrupted`        | Процесс умер, пока задача была `running`, и после рестарта файла не оказалось.                                                                   |
 | HTTP **200**, `status=error`, `error.code = process_killed`     | Процесс умер на `running` больше `TASK_MAX_RESTARTS` раз (kernel OOM-kill / нативный segfault). Воркер остаётся живым. CUDA OOM — это `pipeline_error`. |
 | HTTP **200**, `status=error`, `error.code = ffmpeg_timeout`     | ffmpeg не успел нормализовать загрузку в моно 16 кГц WAV за `FFMPEG_TIMEOUT_SEC`. Процесс конвертера убивается, слот воркера освобождается.        |
+| HTTP **200**, `status=error`, `error.code = task_timeout`       | Задача не уложилась в `TASK_TIMEOUT_SEC` (по умолчанию 4 часа). Следующие этапы не стартуют; слот воркера освобождается, когда текущий этап вернётся. |
 | HTTP **422**                                                    | Неверный `asr_model` / `diarization_model` (`whisper`/`gigaam`; `nemo`/`pyannote`). Пустой `diarization_model` допустим (без диаризации).        |
 
 

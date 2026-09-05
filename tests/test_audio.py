@@ -312,6 +312,174 @@ def test_pipeline_maps_ffmpeg_timeout_to_task_error(
         store.close()
 
 
+def test_pipeline_maps_task_timeout_to_task_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.config import Settings
+    from app.engines.base import Word
+    from app.pipeline import run_pipeline
+    from app.schemas import AsrModel, DiarizationModel, TaskStatus
+    from app.tasks import TaskStore
+
+    clock = {"t": 100.0}
+    monkeypatch.setattr("app.pipeline.time.perf_counter", lambda: clock["t"])
+
+    db = tmp_path / "tasks.db"
+    store = TaskStore(str(db))
+    settings = Settings(
+        DATA_DIR=str(tmp_path),
+        SQLITE_PATH=str(db),
+        LOG_DIR=str(tmp_path / "logs"),
+        PERFORMANCE_LOG=str(tmp_path / "logs" / "performance_log.csv"),
+        TASK_TIMEOUT_SEC=1,
+        _env_file=None,
+    )
+    upload = tmp_path / "clip.wav"
+    upload.write_bytes(b"x")
+    store.create(
+        "task-timeout-task",
+        AsrModel.whisper,
+        DiarizationModel.nemo,
+        settings.WHISPER_MODEL,
+        settings.NEMO_MODEL,
+        str(upload),
+    )
+
+    diar_calls: list[str] = []
+
+    class SlowASR:
+        def words(self, wav_path: str):
+            clock["t"] += 2
+            return [Word(start=0.0, end=1.0, text="hi")]
+
+    class BoomDiar:
+        def segments(self, wav_path: str):
+            diar_calls.append(wav_path)
+            raise AssertionError("diarization must not run after task timeout")
+
+    monkeypatch.setattr("app.pipeline.prepare_wav", lambda *_a, **_k: upload)
+    monkeypatch.setattr("app.pipeline.audio_duration_sec", lambda _p: 1.0)
+    monkeypatch.setattr("app.pipeline.resolve_asr", lambda *_a, **_k: SlowASR())
+    monkeypatch.setattr("app.pipeline.resolve_diarization", lambda *_a, **_k: BoomDiar())
+    try:
+        run_pipeline(store, settings, "task-timeout-task")
+        done = store.get("task-timeout-task")
+        assert done is not None
+        assert done.status is TaskStatus.error
+        assert done.error is not None
+        assert done.error["code"] == "task_timeout"
+        assert done.error["message"] == "task timed out after 1s"
+        assert diar_calls == []
+    finally:
+        store.close()
+
+
+def test_pipeline_task_timeout_zero_disables(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.config import Settings
+    from app.engines.base import Word
+    from app.pipeline import run_pipeline
+    from app.schemas import AsrModel, TaskStatus
+    from app.tasks import TaskStore
+
+    clock = {"t": 0.0}
+    monkeypatch.setattr("app.pipeline.time.perf_counter", lambda: clock["t"])
+
+    db = tmp_path / "tasks.db"
+    store = TaskStore(str(db))
+    settings = Settings(
+        DATA_DIR=str(tmp_path),
+        SQLITE_PATH=str(db),
+        LOG_DIR=str(tmp_path / "logs"),
+        PERFORMANCE_LOG=str(tmp_path / "logs" / "performance_log.csv"),
+        TASK_TIMEOUT_SEC=0,
+        _env_file=None,
+    )
+    upload = tmp_path / "clip.wav"
+    upload.write_bytes(b"x")
+    store.create(
+        "task-timeout-off",
+        AsrModel.whisper,
+        None,
+        settings.WHISPER_MODEL,
+        None,
+        str(upload),
+    )
+
+    class SlowASR:
+        def words(self, wav_path: str):
+            clock["t"] += 10_000
+            return [Word(start=0.0, end=1.0, text="hi")]
+
+    monkeypatch.setattr("app.pipeline.prepare_wav", lambda *_a, **_k: upload)
+    monkeypatch.setattr("app.pipeline.audio_duration_sec", lambda _p: 1.0)
+    monkeypatch.setattr("app.pipeline.resolve_asr", lambda *_a, **_k: SlowASR())
+    try:
+        run_pipeline(store, settings, "task-timeout-off")
+        done = store.get("task-timeout-off")
+        assert done is not None
+        assert done.status is TaskStatus.success
+    finally:
+        store.close()
+
+
+def test_pipeline_bounds_ffmpeg_timeout_by_task_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.config import Settings
+    from app.engines.base import Word
+    from app.pipeline import run_pipeline
+    from app.schemas import AsrModel, TaskStatus
+    from app.tasks import TaskStore
+
+    clock = {"t": 0.0}
+    monkeypatch.setattr("app.pipeline.time.perf_counter", lambda: clock["t"])
+    captured: dict[str, object] = {}
+
+    def fake_prepare(_src, _task_id, _data_dir, timeout_sec=None):
+        captured["timeout_sec"] = timeout_sec
+        return tmp_path / "clip.wav"
+
+    db = tmp_path / "tasks.db"
+    store = TaskStore(str(db))
+    settings = Settings(
+        DATA_DIR=str(tmp_path),
+        SQLITE_PATH=str(db),
+        LOG_DIR=str(tmp_path / "logs"),
+        PERFORMANCE_LOG=str(tmp_path / "logs" / "performance_log.csv"),
+        TASK_TIMEOUT_SEC=10,
+        FFMPEG_TIMEOUT_SEC=120,
+        _env_file=None,
+    )
+    upload = tmp_path / "clip.wav"
+    upload.write_bytes(b"x")
+    store.create(
+        "ffmpeg-bounded",
+        AsrModel.whisper,
+        None,
+        settings.WHISPER_MODEL,
+        None,
+        str(upload),
+    )
+
+    class InstantASR:
+        def words(self, wav_path: str):
+            return [Word(start=0.0, end=1.0, text="hi")]
+
+    monkeypatch.setattr("app.pipeline.prepare_wav", fake_prepare)
+    monkeypatch.setattr("app.pipeline.audio_duration_sec", lambda _p: 1.0)
+    monkeypatch.setattr("app.pipeline.resolve_asr", lambda *_a, **_k: InstantASR())
+    try:
+        run_pipeline(store, settings, "ffmpeg-bounded")
+        done = store.get("ffmpeg-bounded")
+        assert done is not None
+        assert done.status is TaskStatus.success
+        assert captured["timeout_sec"] == 10
+    finally:
+        store.close()
+
+
 def test_run_pipeline_does_not_call_infer_device(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

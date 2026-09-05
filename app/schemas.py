@@ -58,6 +58,7 @@ class ErrorCode(str, Enum):
     task_running = "task_running"
     missing_upload = "missing_upload"
     ffmpeg_timeout = "ffmpeg_timeout"
+    task_timeout = "task_timeout"
     zero_duration = "zero_duration"
     pipeline_error = "pipeline_error"
     engine_unavailable = "engine_unavailable"

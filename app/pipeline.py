@@ -53,6 +53,32 @@ def _diarization_label(model: DiarizationModel | None) -> str | None:
     return None if model is None else model.value
 
 
+def _task_deadline(timeout_sec: int) -> float | None:
+    if timeout_sec <= 0:
+        return None
+    return time.perf_counter() + float(timeout_sec)
+
+
+def _raise_if_task_timeout(deadline: float | None, timeout_sec: int) -> None:
+    if deadline is not None and time.perf_counter() >= deadline:
+        raise TaskFailed(
+            ErrorCode.task_timeout,
+            f"task timed out after {timeout_sec}s",
+        )
+
+
+def _ffmpeg_timeout_bounded(settings: Settings, deadline: float | None) -> float | int:
+    """Лимит ffmpeg: свой FFMPEG_TIMEOUT_SEC, но не дольше оставшегося TASK_TIMEOUT_SEC."""
+    _raise_if_task_timeout(deadline, settings.TASK_TIMEOUT_SEC)
+    ffmpeg = settings.FFMPEG_TIMEOUT_SEC
+    if deadline is None:
+        return ffmpeg
+    remaining = deadline - time.perf_counter()
+    if ffmpeg <= 0:
+        return remaining
+    return min(float(ffmpeg), remaining)
+
+
 def _rtf(
     duration: float | None, asr_time: float | None, diar_time: float | None
 ) -> float | None:
@@ -114,6 +140,7 @@ def run_pipeline(store: TaskStore, settings: Settings, task_id: str, slot: int =
     if not store.mark_running(task_id):
         return
     started = time.perf_counter()
+    deadline = _task_deadline(settings.TASK_TIMEOUT_SEC)
     duration: float | None = None
     asr_time: float | None = None
     diar_time: float | None = None
@@ -131,10 +158,12 @@ def run_pipeline(store: TaskStore, settings: Settings, task_id: str, slot: int =
                 record.upload_path,
                 task_id,
                 settings.DATA_DIR,
-                timeout_sec=settings.FFMPEG_TIMEOUT_SEC,
+                timeout_sec=_ffmpeg_timeout_bounded(settings, deadline),
             )
         except FfmpegTimeout as exc:
+            _raise_if_task_timeout(deadline, settings.TASK_TIMEOUT_SEC)
             raise TaskFailed(ErrorCode.ffmpeg_timeout, str(exc)) from exc
+        _raise_if_task_timeout(deadline, settings.TASK_TIMEOUT_SEC)
         duration = audio_duration_sec(wav)
         if duration <= 0:
             raise TaskFailed(ErrorCode.zero_duration, "audio duration is zero")
@@ -144,6 +173,7 @@ def run_pipeline(store: TaskStore, settings: Settings, task_id: str, slot: int =
         t0 = time.perf_counter()
         words = list(asr.words(str(wav)))
         asr_time = time.perf_counter() - t0
+        _raise_if_task_timeout(deadline, settings.TASK_TIMEOUT_SEC)
 
         if record.diarization_model is None:
             diar_time = 0.0
@@ -155,11 +185,13 @@ def run_pipeline(store: TaskStore, settings: Settings, task_id: str, slot: int =
             t0 = time.perf_counter()
             segments = list(diar.segments(str(wav)))
             diar_time = time.perf_counter() - t0
+            _raise_if_task_timeout(deadline, settings.TASK_TIMEOUT_SEC)
 
             t0 = time.perf_counter()
             utterances = align(words, segments)
             align_time = time.perf_counter() - t0
 
+        _raise_if_task_timeout(deadline, settings.TASK_TIMEOUT_SEC)
         total_time = time.perf_counter() - started
         rtf = (asr_time + diar_time) / duration
         transcript = [

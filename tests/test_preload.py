@@ -27,6 +27,7 @@ def test_preload_defaults_all() -> None:
     assert settings.PRELOAD_DIARIZATION == "all"
     assert settings.DEVICE == "auto"
     assert settings.FFMPEG_TIMEOUT_SEC == 120
+    assert settings.TASK_TIMEOUT_SEC == 14400
     assert settings.TASK_MAX_RESTARTS == 1
     assert settings.MAX_UPLOAD_BYTES == 1024 ** 3
     assert settings.LOG_MAX_BYTES == 5 * 1024 * 1024
@@ -70,6 +71,11 @@ def test_preload_rejects_unknown(field: str, value: str) -> None:
 def test_task_max_restarts_rejects_negative() -> None:
     with pytest.raises(ValidationError):
         Settings(TASK_MAX_RESTARTS=-1, _env_file=None)
+
+
+def test_task_timeout_sec_rejects_negative() -> None:
+    with pytest.raises(ValidationError):
+        Settings(TASK_TIMEOUT_SEC=-1, _env_file=None)
 
 
 def test_max_upload_bytes_rejects_non_positive() -> None:
