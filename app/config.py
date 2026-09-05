@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     LOG_DIR: str = "./data/logs"
     PERFORMANCE_LOG: str = "./data/logs/performance_log.csv"
     LOG_ENABLED: bool = True
+    LOG_MAX_BYTES: int = 5 * 1024 * 1024
+    LOG_BACKUP_COUNT: int = 5
     PERFORMANCE_LOG_ENABLED: bool = True
     METRICS_ENABLED: bool = True
 
@@ -66,6 +68,20 @@ class Settings(BaseSettings):
     def _positive_upload_limit(cls, value: int) -> int:
         if value <= 0:
             raise ValueError("MAX_UPLOAD_BYTES must be > 0")
+        return value
+
+    @field_validator("LOG_MAX_BYTES")
+    @classmethod
+    def _positive_log_max_bytes(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("LOG_MAX_BYTES must be > 0")
+        return value
+
+    @field_validator("LOG_BACKUP_COUNT")
+    @classmethod
+    def _positive_log_backup_count(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("LOG_BACKUP_COUNT must be >= 1")
         return value
 
     @field_validator("WORKERS")

@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from app.config import Settings, get_settings
-from app.logging_setup import LOG_FILENAME, setup_logging
+from app.logging_setup import APP_LOGGER_NAME, LOG_FILENAME, setup_logging
 from app.metrics import CSV_FIELDS, CSV_HEADER, MetricEvent, write_metric
 
 PROBE_MESSAGE = "log-flag-probe"
@@ -134,6 +134,27 @@ def test_four_flag_combinations(
         assert not app_log.exists()
         assert PROBE_MESSAGE not in captured.err
         assert PROBE_MESSAGE not in captured.out
+    get_settings.cache_clear()
+
+
+def test_app_log_rotates_by_size(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    log_dir = tmp_path / "logs"
+    monkeypatch.setenv("LOG_DIR", str(log_dir))
+    monkeypatch.setenv("LOG_ENABLED", "true")
+    monkeypatch.setenv("LOG_MAX_BYTES", "200")
+    monkeypatch.setenv("LOG_BACKUP_COUNT", "2")
+    get_settings.cache_clear()
+    setup_logging(get_settings())
+    log = logging.getLogger(APP_LOGGER_NAME)
+    for i in range(40):
+        log.info("rotation-probe-%s-%s", i, "x" * 80)
+    for handler in log.handlers:
+        handler.flush()
+
+    assert (log_dir / LOG_FILENAME).is_file()
+    assert (log_dir / f"{LOG_FILENAME}.1").is_file()
+    backups = sorted(log_dir.glob(f"{LOG_FILENAME}.*"))
+    assert len(backups) <= 2
     get_settings.cache_clear()
 
 

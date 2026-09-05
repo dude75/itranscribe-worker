@@ -29,6 +29,8 @@ def test_preload_defaults_all() -> None:
     assert settings.FFMPEG_TIMEOUT_SEC == 120
     assert settings.TASK_MAX_RESTARTS == 1
     assert settings.MAX_UPLOAD_BYTES == 1024 ** 3
+    assert settings.LOG_MAX_BYTES == 5 * 1024 * 1024
+    assert settings.LOG_BACKUP_COUNT == 5
     assert settings.WORKERS == 1
     assert settings.asr_families_to_preload() == ("whisper", "gigaam")
     assert settings.diarization_families_to_preload() == ("nemo", "pyannote")
@@ -75,6 +77,17 @@ def test_max_upload_bytes_rejects_non_positive() -> None:
         Settings(MAX_UPLOAD_BYTES=0, _env_file=None)
     with pytest.raises(ValidationError):
         Settings(MAX_UPLOAD_BYTES=-1, _env_file=None)
+
+
+def test_log_rotation_settings_reject_invalid() -> None:
+    with pytest.raises(ValidationError):
+        Settings(LOG_MAX_BYTES=0, _env_file=None)
+    with pytest.raises(ValidationError):
+        Settings(LOG_MAX_BYTES=-1, _env_file=None)
+    with pytest.raises(ValidationError):
+        Settings(LOG_BACKUP_COUNT=0, _env_file=None)
+    with pytest.raises(ValidationError):
+        Settings(LOG_BACKUP_COUNT=-1, _env_file=None)
 
 
 def test_workers_rejects_non_positive() -> None:
