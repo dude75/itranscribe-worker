@@ -1,0 +1,294 @@
+# itranscribe-worker
+
+On-premise **ASR + optional speaker diarization** HTTP service. Submit an audio file, pick ASR (and optionally a diarization family), poll the task until the linear transcript is ready.
+
+**Language:** [English](README.md) · [Русский](README.ru.md)
+
+## What it does
+
+- Input: WAV, MP3, or M4A.
+- Output: a **linear** list of utterances (`speaker`, `start`, `end`, `text`) — one phrase at a time, not overlapping JSON. Without diarization, `speaker` is `null`.
+- Each task chooses a combination:
+  - ASR: `whisper`, `gigaam`, or `parakeet` (required)
+  - Diarization: `nemo` or `pyannote`, or **omit / empty** to skip diarization (transcription only)
+- Concrete checkpoints (Whisper size, GigaAM name, Parakeet NeMo id, PyAnnote pipeline, NeMo diarization models) are set in `.env`, not in the request body.
+- One Python process: each `WORKERS` slot is a full in-memory copy of every model loaded by `PRELOAD_*`. Files on disk are not duplicated.
+
+`POST /transcribe` returns **202** with a `task_id`. Fetch the result from `/tasks`.
+
+## Requirements
+
+- Python **3.12**
+- Virtualenv at `.venv` (use `./.venv/bin/python` and `./.venv/bin/pip` only)
+- **ffmpeg** on `PATH` (all uploads → mono 16 kHz WAV, GigaAM longform)
+- Hugging Face account + **accepted licenses** for PyAnnote 3.1 (`pyannote/speaker-diarization-3.1` and its dependencies). Set `HF_TOKEN` in `.env` (the same token downloads Sortformer from Hugging Face). Without a token/license, PyAnnote is unavailable.
+- Disk under `./data` for model weights, SQLite, logs, and the task queue tmp (not committed)
+
+
+
+## Install and run
+
+```bash
+python3.12 -m venv .venv
+./.venv/bin/pip install -U pip
+./.venv/bin/pip install -r requirements.txt
+./.venv/bin/pip install -r requirements-ml.txt
+```
+
+Create a `.env` in the repo root (see table below). Do not commit it. Then:
+
+```bash
+./.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
+```
+
+Always keep **uvicorn** `--workers 1`. Parallelism of jobs is `WORKERS` in `.env` (slots inside this one process), not extra uvicorn processes.
+
+First start **preloads** the families chosen by `PRELOAD_ASR` and `PRELOAD_DIARIZATION` (default `all` = all ASR and diarization families). For each family the first replica uses `MODELS_DIR` if the weights are already there, otherwise it downloads from Hugging Face; the remaining `WORKERS` replicas of that family load only from that cache (no Hub etag). Weights for skipped families are not downloaded. A failed engine is `unavailable`; a skipped one is `disabled`. The process stays up. The first real task should not download weights again if they already sit in `./data/models`.
+
+Check:
+
+```bash
+curl -s http://127.0.0.1:8000/health
+```
+
+Docker: [Docker Compose](#docker-compose) (CPU or NVIDIA GPU images).
+
+## `.env`
+
+Copy names into `.env`. **Do not put real tokens in git or in this README.** Changing a value requires a process restart (loaded checkpoints stay in memory until then).
+
+
+| Variable                  | Meaning                                                                                                                                                                                                                                     |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `API_TOKEN`               | Bearer key for all routes except `/health`. Empty = nobody is authorized. Not the same as `HF_TOKEN`. Also the key that seals `transcript` in SQLite (see below).                                                                              |
+| `HF_TOKEN`                | Hugging Face token: download PyAnnote, VAD used by GigaAM longform, and the NeMo Sortformer checkpoint.                                                                                                                                     |
+| `HOST`                    | Bind address (`127.0.0.1` locally; Docker uses `0.0.0.0`).                                                                                                                                                                                  |
+| `PORT`                    | HTTP port (default `8000`).                                                                                                                                                                                                                 |
+| `DATA_DIR`                | Persistent root (default `./data`): models, SQLite, logs, and queue tmp at `{DATA_DIR}/tmp/<task_id>/`.                                                                                                                                     |
+| `MODELS_DIR`              | Model weights / HF cache (default `./data/models`).                                                                                                                                                                                         |
+| `SQLITE_PATH`             | Task database (default `./data/tasks.db`). Audio is not stored here; uploads live under `{DATA_DIR}/tmp/`. The `transcript` column is encrypted at rest (see below).                                                                        |
+| `LOG_DIR`                 | Application log directory (default `./data/logs`).                                                                                                                                                                                          |
+| `PERFORMANCE_LOG`         | Inference metrics CSV (default `./data/logs/performance_log.csv`).                                                                                                                                                                          |
+| `LOG_ENABLED`             | Application file log + app logger. Default `true`. `false` / `0` / `no` = off. Does not affect CSV / `metric_event`.                                                                                                                        |
+| `LOG_MAX_BYTES`           | Rotate `app.log` when it exceeds this size in bytes. Default `5242880` (5 MiB).                                                                                                                                                             |
+| `LOG_BACKUP_COUNT`        | How many rotated files to keep (`app.log.1` … `app.log.N`). Default `5`.                                                                                                                                                                    |
+| `PERFORMANCE_LOG_ENABLED` | CSV row + JSON `metric_event` on stdout when a task finishes. Default `true`. `false` / `0` / `no` = off. Does not affect app logs.                                                                                                         |
+| `METRICS_ENABLED`         | Application Prometheus metrics on `GET /metrics`. Default `true`. `false` / `0` / `no` = process collectors only; the endpoint stays up.                                                                                                    |
+| `WHISPER_MODEL`           | Faster-Whisper checkpoint name (default `large-v3-turbo`).                                                                                                                                                                                  |
+| `GIGAAM_MODEL`            | `gigaam.load_model` name (default `multilingual_large_ctc`).                                                                                                                                                                                |
+| `PARAKEET_MODEL`          | NeMo ASR checkpoint id (default `nvidia/parakeet-tdt-0.6b-v3`). Multilingual with punctuation.                                                                                                                                              |
+| `PARAKEET_CHUNK_SEC`      | Max seconds per Parakeet `transcribe()` call (default `1380`, ~23 min). Longer audio is split with ffmpeg and timestamps merged.                                                                                                            |
+| `PYANNOTE_MODEL`          | PyAnnote pipeline id (default `pyannote/speaker-diarization-3.1`).                                                                                                                                                                          |
+| `NEMO_MODEL`              | Hugging Face id of Sortformer for the `nemo` family (default `nvidia/diar_streaming_sortformer_4spk-v2`, CC-BY-4.0). Maximum 4 speakers.                                                                                                    |
+| `PRELOAD_ASR`             | Which ASR families to load and download at startup: `whisper`, `gigaam`, `parakeet`, `all` (default), or a comma-separated subset (`whisper,parakeet`).                                                                                                                                     |
+| `PRELOAD_DIARIZATION`     | Which diarization families to load and download at startup: `nemo`, `pyannote`, `all` (default), or a comma-separated subset (`nemo,pyannote`).                                                                                                                                         |
+| `DEVICE`                  | Inference device: `auto` (default), `cpu`, or `cuda`. `auto` uses CUDA when `torch.cuda.is_available()`, otherwise CPU. `cpu` never uses the GPU. `cuda` requires CUDA or the process fails at startup. Docker Compose sets this per image. |
+| `WORKERS`                 | How many **tasks** may run at once in this process. Default `1`. Not uvicorn workers. Each slot is a full in-memory copy of every loaded model (RAM/VRAM × `WORKERS`); files on disk stay one set.                                          |
+| `WORKER_QUEUE_SIZE`       | Max `queued` tasks waiting for a slot. Default `4`. Beyond that: `503` `queue_full`.                                                                                                                                                        |
+| `MAX_UPLOAD_BYTES`        | Max `POST /transcribe` body in bytes (`Content-Length` and streamed file bytes). Default `1073741824` (1 GiB). Over the limit: HTTP **413** `payload_too_large`.                                                                            |
+| `TASK_TTL_SEC`            | Seconds after `success`/`error` before the SQLite row is deleted. `0` = no TTL (delete only via `DELETE`).                                                                                                                                  |
+| `FFMPEG_TIMEOUT_SEC`      | Seconds allowed for ffmpeg when normalizing any upload (WAV/MP3/M4A) to mono 16 kHz WAV. Default `120`. On timeout the task becomes `error` with `ffmpeg_timeout` and the ffmpeg process is killed. `0` = no limit.                          |
+| `TASK_TIMEOUT_SEC`        | Wall-clock seconds for the whole task (ffmpeg + ASR + diarization + alignment). Default `14400` (4 hours). On timeout the task becomes `error` with `task_timeout`; the current stage is allowed to finish, later stages are skipped. Native inference cannot be aborted mid-call. `0` = no limit. |
+| `TASK_MAX_RESTARTS`       | How many times a task found `running` after a process death may be put back in `queued`. Default `1` (one retry). After that: `error` with `process_killed`. `0` = fail on the first restore. CUDA OOM is a caught Python exception (`pipeline_error`) and does not count. |
+
+
+Everything that must survive a restart lives under `./data` (models, `tasks.db`, logs, **and queue tmp** `{DATA_DIR}/tmp/`). Mount that directory in Docker. The Compose container writes it as uid/gid **1001** (see [Docker Compose](#docker-compose)).
+
+`transcript` in `tasks.db` is Fernet-encrypted (AES-128-CBC + HMAC). The key is `SHA-256(API_TOKEN)`, not the raw token. `GET /tasks/{id}` still returns plaintext JSON; the list endpoint never includes the transcript. Metadata, `error`, and tmp audio stay unencrypted. This only helps if `tasks.db` leaks without `.env`. Changing `API_TOKEN` makes existing encrypted rows unreadable until TTL or `DELETE`; rows written before this version are still plaintext JSON and keep working.
+
+After a process restart (or `docker compose restart`) unfinished work is restored from SQLite + those tmp files — **not** resumed mid-pipeline:
+
+- `queued` tasks with an upload file on disk are put back on the in-memory queue (FIFO by `timestamp`). `WORKER_QUEUE_SIZE` is **not** applied on restore, so the queue may be longer than the limit until it drains; new `POST /transcribe` still uses the limit.
+- A task that was `running` is set back to `queued` and run from scratch if its upload file still exists, at most `TASK_MAX_RESTARTS` times (default `1`). Another process death after that finishes as `error` with `process_killed` (kernel OOM-kill, native segfault — not CUDA OOM). If the file is gone, it finishes as `error` with `interrupted`.
+- A `queued` task whose upload file is missing finishes as `error` with `missing_upload` and is not enqueued.
+- Graceful shutdown does **not** delete tmp for queued or running tasks. Finished (`success` / `error`) tmp is still cleaned.
+
+
+
+## API
+
+All routes except `GET /health` require:
+
+`Authorization: Bearer <API_TOKEN>`
+
+Replace `$TOKEN` and `$HOST` in the examples (`http://127.0.0.1:8000`).
+
+### Health (no token)
+
+```bash
+curl -s "$HOST/health"
+```
+
+JSON includes `version` (same as `version.txt`), which engines are `loaded`, `unavailable`, or `disabled` (no secrets). `disabled` means the family was left out of `PRELOAD_ASR` / `PRELOAD_DIARIZATION`. `device` is `cpu` or `cuda`.
+
+### Metrics
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" "$HOST/metrics"
+```
+
+Prometheus text format. Process collectors plus application gauges/counters/histograms (queue, engines, task timings). Same Bearer as the rest of the API.
+
+Grafana: import [`grafana/dashboards/itranscribe-worker.json`](grafana/dashboards/itranscribe-worker.json) (Dashboards → New → Import) and pick the Prometheus that scrapes this endpoint. Example scrape:
+
+```yaml
+scrape_configs:
+  - job_name: itranscribe-worker
+    metrics_path: /metrics
+    scrape_interval: 15s
+    authorization:
+      credentials: "<API_TOKEN>"
+    static_configs:
+      - targets: ["127.0.0.1:8000"]
+```
+
+The dashboard covers queue, engines, pipeline/RTF, HTTP, and process/disk. ASR-only tasks use `diarization_model="none"`. HTTP panels exclude `/metrics` scrapes. CSV `PERFORMANCE_LOG` is separate and is not on this dashboard.
+
+### Submit a file → 202
+
+```bash
+curl -sS -X POST "$HOST/transcribe" \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "file=@./sample.wav" \
+  -F "asr_model=whisper" \
+  -F "diarization_model=pyannote"
+```
+
+`asr_model`: `whisper` (default), `gigaam`, or `parakeet`.  
+`diarization_model`: `nemo` (Sortformer, max 4 speakers) or `pyannote`. Omit the field or send it empty to skip diarization (ASR only). There is no default family — missing/empty means no speaker map. For long files where speed matters, send `nemo`. Use `pyannote` when its speaker map matters more than minimum runtime.
+
+### Poll one task
+
+```bash
+TASK_ID=4f8b9e12-87c2-4911-bca4-d832e12cf900
+curl -sS "$HOST/tasks/$TASK_ID" -H "Authorization: Bearer $TOKEN"
+```
+
+`status` is `queued` | `running` | `success` | `error`. On success, `transcript` is filled. On a **task** error (engine, file, inference) HTTP is still **200** with `"status": "error"` and an `error` object — keep polling the same URL. Unknown id → **404**.
+
+Example poll loop:
+
+```bash
+TASK_ID=$(curl -sS -X POST "$HOST/transcribe" \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "file=@./sample.wav" \
+  -F "asr_model=whisper" \
+  -F "diarization_model=pyannote" | python3 -c "import sys,json; print(json.load(sys.stdin)['meta']['task_id'])")
+
+while true; do
+  body=$(curl -sS "$HOST/tasks/$TASK_ID" -H "Authorization: Bearer $TOKEN")
+  status=$(printf '%s' "$body" | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])")
+  echo "$status"
+  case "$status" in success|error) printf '%s\n' "$body"; break ;; esac
+  sleep 2
+done
+```
+
+
+
+### List tasks
+
+```bash
+curl -sS "$HOST/tasks" -H "Authorization: Bearer $TOKEN"
+curl -sS "$HOST/tasks?status=success" -H "Authorization: Bearer $TOKEN"
+```
+
+Newest first. No transcript in the list.
+
+### Delete one task
+
+```bash
+curl -sS -X DELETE "$HOST/tasks/$TASK_ID" -H "Authorization: Bearer $TOKEN"
+```
+
+- `queued` / `success` / `error` → **200**, row removed (queued also drops tmp audio).
+- `running` → **409** `task_running` (in-flight inference is not cancelled).
+
+
+
+### Purge queue and history
+
+```bash
+curl -sS -X DELETE "$HOST/tasks" -H "Authorization: Bearer $TOKEN"
+```
+
+Clears the whole queue and finished history. **Does not** cancel a task that is currently `running` (those rows and their tmp stay; HTTP **200**, not **409**). Also removes orphan dirs under `{DATA_DIR}/tmp/` plus leftover CWD `tmp_`* and `{DATA_DIR}/.upload_*`. Does not touch `models/`, `tasks.db`, or logs.
+
+JSON **200**:
+
+```json
+{
+  "status": "ok",
+  "purged_queued": 0,
+  "purged_finished": 0,
+  "purged_tmp": 0,
+  "skipped_running": 0
+}
+```
+
+`purged_tmp` is the number of task directories removed under `{DATA_DIR}/tmp/` plus any legacy CWD `tmp_*` directories removed.
+
+## Docker Compose
+
+Two images from the same `Dockerfile`: **CPU** (`itranscribe-worker:cpu`) and **NVIDIA GPU** (`itranscribe-worker:gpu`). Compose sets `DEVICE` per image (`cpu` / `cuda`). Do not run both stacks on port `8000` at the same time.
+
+### Prepare
+
+1. Copy `.env.example` → `.env` and fill `API_TOKEN` / `HF_TOKEN` (see `[.env](#env)`).
+2. Create `./data` if it does not exist (weights, SQLite, logs, queue tmp). Compose mounts `./data:/data`.
+   The container process runs as **uid/gid 1001** (not root). That user must be able to write `./data`.
+   If this directory already exists from an older root-owned container, fix ownership once:
+
+   ```bash
+   sudo chown -R 1001:1001 ./data
+   ```
+
+   Do not chmod `777`. `docker compose down` does not delete `./data`.
+3. **GPU only:** NVIDIA driver on the host and [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html). Check: `nvidia-smi` and `docker run --rm --gpus all nvidia/cuda:12.9.2-base-ubuntu24.04 nvidia-smi`.
+
+
+
+### Run
+
+CPU:
+
+```bash
+docker compose up --build
+```
+
+GPU:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
+```
+
+Add `-d` to run in the background (`docker compose logs -f` for logs). Published port: `8000:8000`. First start preloads engines (same as local). Weights stay in `./data/models` on the host.
+
+Then the same API `curl` examples against `http://127.0.0.1:8000`.
+
+```bash
+docker compose down
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml down
+```
+
+`./data` on the host is not deleted. After switching from a root-owned image, run `sudo chown -R 1001:1001 ./data` before the next `up` if logs show `Permission denied` on `/data`.
+
+## Typical errors
+
+
+| What you see                                                    | Meaning                                                                                                                                   |
+| --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| HTTP **401**, `error.code = unauthorized`                       | Missing/wrong `Authorization: Bearer …`, or empty `API_TOKEN`.                                                                            |
+| `GET /tasks/{id}` 500 after changing `API_TOKEN`                | Encrypted `transcript` rows were sealed with the previous token. Wait for `TASK_TTL_SEC` or `DELETE` those tasks.                         |
+| HTTP **503**, `error.code = queue_full`                         | Too many `queued` tasks (`WORKER_QUEUE_SIZE`). Wait or raise the limit and restart.                                                       |
+| HTTP **413**, `error.code = payload_too_large`                  | `POST /transcribe` body larger than `MAX_UPLOAD_BYTES` (default 1 GiB).                                                                   |
+| HTTP **200**, `status=error`, `error.code = engine_unavailable` | Requested family is `unavailable` or `disabled` in `/health`. Switch `asr_model` / `diarization_model`, or change preload and restart.    |
+| HTTP **200**, `status=error`, `error.code = missing_upload`     | Upload file for a queued/restored task is gone from `{DATA_DIR}/tmp/`.                                                                    |
+| HTTP **200**, `status=error`, `error.code = interrupted`        | Process died while the task was `running` and the upload file was missing after restart.                                                  |
+| HTTP **200**, `status=error`, `error.code = process_killed`     | Process died while the task was `running` more times than `TASK_MAX_RESTARTS` (kernel OOM-kill / native segfault). The worker stays up. CUDA OOM is `pipeline_error`. |
+| HTTP **200**, `status=error`, `error.code = ffmpeg_timeout`     | ffmpeg did not finish normalizing the upload to mono 16 kHz WAV within `FFMPEG_TIMEOUT_SEC`. The converter process is killed; the worker slot is freed. |
+| HTTP **200**, `status=error`, `error.code = task_timeout`       | The task did not finish within `TASK_TIMEOUT_SEC` (default 4 hours). Remaining stages are skipped; the worker slot is freed after the current stage returns. |
+| HTTP **422**                                                    | Invalid `asr_model` / `diarization_model` (`whisper`/`gigaam`/`parakeet`; `nemo`/`pyannote`). Empty `diarization_model` is valid (skip diarization). |
+| `Permission denied` on `/data/...` (`tasks.db`, `models`, `logs`, `tmp`) | Host `./data` is not writable by uid 1001. Run `sudo chown -R 1001:1001 ./data` and restart. Do not chmod `777`. |
+
+

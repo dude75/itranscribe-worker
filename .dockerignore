@@ -1,0 +1,15 @@
+.git/
+.venv/
+technical/
+.env
+tmp_*/
+data/**
+!data/.gitkeep
+!data/models/.gitkeep
+!data/logs/.gitkeep
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.DS_Store
+tests/
+agent-transcripts/
