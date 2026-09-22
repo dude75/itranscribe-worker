@@ -3,7 +3,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ASR_FAMILIES = ("whisper", "gigaam", "parakeet")
@@ -79,7 +79,7 @@ class Settings(BaseSettings):
     PRELOAD_DIARIZATION: str = "all"
     DEVICE: Literal["auto", "cpu", "cuda"] = "auto"
 
-    WORKERS: int = 1
+    WORKERS: int = Field(default=1, validation_alias=AliasChoices("WORKERS", "WORKERS_MAX"))
     WORKER_QUEUE_SIZE: int = 4
     MAX_UPLOAD_BYTES: int = 1024 ** 3
     TASK_TTL_SEC: int = 3600

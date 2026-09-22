@@ -113,11 +113,18 @@ class TaskListItem(BaseModel):
     diarization_model: DiarizationModel | None = None
 
 
+class WorkersHealth(BaseModel):
+    max: int
+    active: int
+    available: int
+
+
 class HealthResponse(BaseModel):
     status: str = "ok"
     version: str
     engines: dict[str, EngineStatus] = Field(default_factory=dict)
     device: str = "cpu"
+    workers: WorkersHealth
 
 
 class PurgeResult(BaseModel):

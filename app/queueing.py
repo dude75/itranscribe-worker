@@ -24,6 +24,7 @@ from app.schemas import (
     ErrorDetail,
     PurgeResult,
     TaskStatus,
+    WorkersHealth,
 )
 from app.tasks import TaskRecord, TaskStore
 
@@ -53,6 +54,12 @@ class TaskRunner:
         self._tasks: set[asyncio.Task[None]] = set()
         self._dispatcher: asyncio.Task[None] | None = None
         self._ttl_task: asyncio.Task[None] | None = None
+
+    def worker_snapshot(self) -> WorkersHealth:
+        max_workers = self.settings.WORKERS
+        available = self._free_slots.qsize()
+        active = max_workers - available
+        return WorkersHealth(max=max_workers, active=active, available=available)
 
     async def start(self) -> None:
         Path(self.settings.LOG_DIR).mkdir(parents=True, exist_ok=True)

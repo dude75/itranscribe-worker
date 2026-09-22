@@ -182,13 +182,14 @@ def _record_to_response(record: TaskRecord) -> TaskResponse:
 
 
 @app.get("/health", response_model=HealthResponse)
-def health() -> HealthResponse:
+def health(runner: TaskRunner = Depends(get_runner)) -> HealthResponse:
     cache = get_cache()
     return HealthResponse(
         status="ok",
         version=read_version(),
         engines=cache.status,
         device=cache.device,
+        workers=runner.worker_snapshot(),
     )
 
 

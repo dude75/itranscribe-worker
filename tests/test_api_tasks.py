@@ -66,6 +66,7 @@ def test_health_without_token(client: TestClient) -> None:
     assert body["device"] in {"cpu", "cuda"}
     assert set(body["engines"]) == {"whisper", "gigaam", "parakeet", "nemo", "pyannote"}
     assert set(body["engines"].values()) <= {"loaded", "unavailable", "disabled"}
+    assert body["workers"] == {"max": 1, "active": 0, "available": 1}
 
 
 def test_tasks_unauthorized(client: TestClient) -> None:
