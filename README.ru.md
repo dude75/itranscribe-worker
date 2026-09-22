@@ -84,6 +84,7 @@ Docker: [Docker Compose](#docker-compose) (образы CPU или NVIDIA GPU).
 | `PRELOAD_DIARIZATION`     | Какие диаризации поднимать и скачивать при старте: `nemo`, `pyannote`, `all` (по умолчанию) или подмножество через запятую (`nemo,pyannote`).                                                                                                                                                      |
 | `DEVICE`                  | Устройство инференса: `auto` (по умолчанию), `cpu` или `cuda`. `auto` берёт CUDA, если `torch.cuda.is_available()`, иначе CPU. `cpu` — никогда GPU. `cuda` — только GPU; нет CUDA — процесс не стартует. В Docker Compose значение задаётся образом. |
 | `WORKERS`                 | Сколько **задач** можно считать сразу в этом процессе. По умолчанию `1`. Это не воркеры uvicorn. Слот — полная копия в памяти всех загруженных моделей (RAM/VRAM × `WORKERS`); на диске файлы одни.                                          |
+| `WORKERS_MAX`             | Синоним `WORKERS` (то же значение). В `GET /health` попадает в `workers.max` для Capacity в [idigest-hub](https://github.com/dude75/idigest-hub).                                                                                                    |
 | `WORKER_QUEUE_SIZE`       | Сколько задач может висеть в `queued`. По умолчанию `4`. Сверх лимита: `503` `queue_full`.                                                                                                                                                           |
 | `MAX_UPLOAD_BYTES`        | Максимум тела `POST /transcribe` в байтах (`Content-Length` и стрим файла). По умолчанию `1073741824` (1 GiB). Сверх лимита: HTTP **413** `payload_too_large`.                                                                                        |
 | `TASK_TTL_SEC`            | Через сколько секунд после `success`/`error` удалить строку из SQLite. `0` — не удалять по TTL (только `DELETE`).                                                                                                                                    |
@@ -117,9 +118,32 @@ Docker: [Docker Compose](#docker-compose) (образы CPU или NVIDIA GPU).
 
 ```bash
 curl -s "$HOST/health"
+curl -s "$HOST/health" | jq '{version, device, engines, workers}'
 ```
 
-В JSON — `version` (как в `version.txt`) и какие движки `loaded`, `unavailable` или `disabled` (без секретов). `disabled` — семейство не входило в `PRELOAD_ASR` / `PRELOAD_DIARIZATION`. Поле `device` — `cpu` или `cuda`.
+В JSON — `version` (как в `version.txt`) и какие движки `loaded`, `unavailable` или `disabled` (без секретов). `disabled` — семейство не входило в `PRELOAD_ASR` / `PRELOAD_DIARIZATION`. Поле `device` — `cpu` или `cuda`. Блок `workers` — параллельная ёмкость процесса:
+
+```json
+{
+  "status": "ok",
+  "version": "0.1.1",
+  "engines": { "whisper": "loaded", "gigaam": "loaded", "parakeet": "loaded", "nemo": "loaded", "pyannote": "loaded" },
+  "device": "cuda",
+  "workers": {
+    "max": 2,
+    "active": 0,
+    "available": 2
+  }
+}
+```
+
+| Поле | Смысл |
+| ---- | ----- |
+| `workers.max` | Параллельных слотов транскрипции на этом процессе (`WORKERS` / `WORKERS_MAX`). |
+| `workers.active` | Задач, занимающих слот (`running`). |
+| `workers.available` | Свободных слотов: `max - active`. |
+
+[idigest-hub](https://github.com/dude75/idigest-hub) читает `workers.*` для Capacity transcribe-нод (вместо legacy fallback 1/1, когда размер пула неизвестен).
 
 ### Метрики
 

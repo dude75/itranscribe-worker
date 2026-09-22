@@ -84,6 +84,7 @@ Copy names into `.env`. **Do not put real tokens in git or in this README.** Cha
 | `PRELOAD_DIARIZATION`     | Which diarization families to load and download at startup: `nemo`, `pyannote`, `all` (default), or a comma-separated subset (`nemo,pyannote`).                                                                                                                                         |
 | `DEVICE`                  | Inference device: `auto` (default), `cpu`, or `cuda`. `auto` uses CUDA when `torch.cuda.is_available()`, otherwise CPU. `cpu` never uses the GPU. `cuda` requires CUDA or the process fails at startup. Docker Compose sets this per image. |
 | `WORKERS`                 | How many **tasks** may run at once in this process. Default `1`. Not uvicorn workers. Each slot is a full in-memory copy of every loaded model (RAM/VRAM × `WORKERS`); files on disk stay one set.                                          |
+| `WORKERS_MAX`             | Alias for `WORKERS` (same value). Exposed as `workers.max` in `GET /health` for [idigest-hub](https://github.com/dude75/idigest-hub) Capacity UI.                                                                                          |
 | `WORKER_QUEUE_SIZE`       | Max `queued` tasks waiting for a slot. Default `4`. Beyond that: `503` `queue_full`.                                                                                                                                                        |
 | `MAX_UPLOAD_BYTES`        | Max `POST /transcribe` body in bytes (`Content-Length` and streamed file bytes). Default `1073741824` (1 GiB). Over the limit: HTTP **413** `payload_too_large`.                                                                            |
 | `TASK_TTL_SEC`            | Seconds after `success`/`error` before the SQLite row is deleted. `0` = no TTL (delete only via `DELETE`).                                                                                                                                  |
@@ -117,9 +118,32 @@ Replace `$TOKEN` and `$HOST` in the examples (`http://127.0.0.1:8000`).
 
 ```bash
 curl -s "$HOST/health"
+curl -s "$HOST/health" | jq '{version, device, engines, workers}'
 ```
 
-JSON includes `version` (same as `version.txt`), which engines are `loaded`, `unavailable`, or `disabled` (no secrets). `disabled` means the family was left out of `PRELOAD_ASR` / `PRELOAD_DIARIZATION`. `device` is `cpu` or `cuda`.
+JSON includes `version` (same as `version.txt`), which engines are `loaded`, `unavailable`, or `disabled` (no secrets). `disabled` means the family was left out of `PRELOAD_ASR` / `PRELOAD_DIARIZATION`. `device` is `cpu` or `cuda`. The `workers` block reports parallel task capacity on this process:
+
+```json
+{
+  "status": "ok",
+  "version": "0.1.1",
+  "engines": { "whisper": "loaded", "gigaam": "loaded", "parakeet": "loaded", "nemo": "loaded", "pyannote": "loaded" },
+  "device": "cuda",
+  "workers": {
+    "max": 2,
+    "active": 0,
+    "available": 2
+  }
+}
+```
+
+| Field | Meaning |
+| ----- | ------- |
+| `workers.max` | Parallel transcribe slots on this process (`WORKERS` / `WORKERS_MAX`). |
+| `workers.active` | Tasks currently holding a slot (`running`). |
+| `workers.available` | Free slots: `max - active`. |
+
+[idigest-hub](https://github.com/dude75/idigest-hub) reads `workers.*` for transcribe node Capacity (instead of a legacy 1/1 fallback when the pool size is unknown).
 
 ### Metrics
 
