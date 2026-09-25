@@ -172,7 +172,7 @@ class ParakeetASR:
                 time_offset=time_offset,
                 segment_id=segment_id,
             )
-        text = (getattr(hyp, "text", None) or str(hyp)).strip()
+        text = (getattr(hyp, "text", None) or "").strip()
         if not text:
             return []
         chunk_dur = audio_duration_sec(wav_path)

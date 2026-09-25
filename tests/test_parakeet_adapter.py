@@ -58,6 +58,37 @@ def _fake_nemo_modules(monkeypatch: pytest.MonkeyPatch, model) -> None:
     monkeypatch.setitem(sys.modules, "nemo.collections.asr.models", models)
 
 
+def test_parakeet_empty_hypothesis_returns_no_words(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sr = 16000
+    sf.write(tmp_path / "silent.wav", np.zeros(int(2 * sr), dtype=np.float32), sr)
+
+    class EmptyHyp:
+        text = ""
+        timestamp: dict[str, list] = {}
+
+    class FakeModel:
+        window_stride = 0.01
+
+        def to(self, device):
+            return self
+
+        def eval(self):
+            return self
+
+        def transcribe(self, paths, timestamps=True, **_kwargs):
+            return [EmptyHyp()]
+
+    _fake_nemo_modules(monkeypatch, FakeModel())
+    engine = ParakeetASR(
+        "nvidia/parakeet-tdt-0.6b-v3",
+        str(tmp_path / "models"),
+        device="cpu",
+    )
+    assert engine.words(str(tmp_path / "silent.wav")) == []
+
+
 def test_parakeet_chunks_merge_timestamps(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
