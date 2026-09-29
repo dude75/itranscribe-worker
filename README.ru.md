@@ -137,7 +137,7 @@ curl -s "$HOST/health" | jq '{version, device, engines, workers}'
 ```json
 {
   "status": "ok",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "engines": { "whisper": "loaded", "gigaam": "loaded", "parakeet": "loaded", "nemo": "loaded", "pyannote": "loaded" },
   "device": "cuda",
   "workers": {

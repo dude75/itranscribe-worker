@@ -137,7 +137,7 @@ JSON includes `version` (same as `version.txt`), which engines are `loaded`, `un
 ```json
 {
   "status": "ok",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "engines": { "whisper": "loaded", "gigaam": "loaded", "parakeet": "loaded", "nemo": "loaded", "pyannote": "loaded" },
   "device": "cuda",
   "workers": {
