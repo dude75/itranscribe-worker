@@ -6,7 +6,7 @@ On-premise **ASR + optional speaker diarization** HTTP service. Submit an audio 
 
 ## What it does
 
-- Input: WAV, MP3, M4A, FLAC, OGG, or WebM.
+- Input: WAV, MP3, M4A, FLAC, OGG, Opus, or WebM.
 - Output: a **linear** list of utterances (`speaker`, `start`, `end`, `text`) — one phrase at a time, not overlapping JSON. Without diarization, `speaker` is `null`.
 - Each task chooses a combination:
   - ASR: `whisper`, `gigaam`, or `parakeet` (required)
@@ -97,9 +97,9 @@ Copy names into `.env`. **Do not put real tokens in git or in this README.** Cha
 | `WORKERS_MAX`             | Alias for `WORKERS` (same value). Exposed as `workers.max` in `GET /health` for [idigest-hub](https://github.com/dude75/idigest-hub) Capacity UI.                                                                                          |
 | `WORKER_QUEUE_SIZE`       | Max `queued` tasks waiting for a slot. Default `4`. Beyond that: `503` `queue_full`.                                                                                                                                                        |
 | `MAX_UPLOAD_BYTES`        | Max `POST /transcribe` body in bytes (`Content-Length` and streamed file bytes). Default `1073741824` (1 GiB). Over the limit: HTTP **413** `payload_too_large`.                                                                            |
-| `ALLOWED_UPLOAD_SUFFIXES` | Upload file extensions: `all` (default — wav, mp3, m4a, flac, ogg, webm) or a comma-separated subset (`wav,mp3,m4a`). Unknown values fail at startup. Disallowed extension: HTTP **400** `invalid_file`.                                          |
+| `ALLOWED_UPLOAD_SUFFIXES` | Upload file extensions: `all` (default — wav, mp3, m4a, flac, ogg, opus, webm) or a comma-separated subset (`wav,mp3,m4a`). Unknown values fail at startup. Disallowed extension: HTTP **400** `invalid_file`.                                          |
 | `TASK_TTL_SEC`            | Seconds after `success`/`error` before the SQLite row is deleted. `0` = no TTL (delete only via `DELETE`).                                                                                                                                  |
-| `FFMPEG_TIMEOUT_SEC`      | Seconds allowed for ffmpeg when normalizing any upload (WAV/MP3/M4A/FLAC/OGG/WebM) to mono 16 kHz WAV. Default `120`. On timeout the task becomes `error` with `ffmpeg_timeout` and the ffmpeg process is killed. `0` = no limit.                          |
+| `FFMPEG_TIMEOUT_SEC`      | Seconds allowed for ffmpeg when normalizing any upload (WAV/MP3/M4A/FLAC/OGG/Opus/WebM) to mono 16 kHz WAV. Default `120`. On timeout the task becomes `error` with `ffmpeg_timeout` and the ffmpeg process is killed. `0` = no limit.                          |
 | `TASK_TIMEOUT_SEC`        | Wall-clock seconds for the whole task (ffmpeg + ASR + diarization + alignment). Default `14400` (4 hours). On timeout the task becomes `error` with `task_timeout`; the current stage is allowed to finish, later stages are skipped. Native inference cannot be aborted mid-call. `0` = no limit. |
 | `TASK_MAX_RESTARTS`       | How many times a task found `running` after a process death may be put back in `queued`. Default `1` (one retry). After that: `error` with `process_killed`. `0` = fail on the first restore. CUDA OOM is a caught Python exception (`pipeline_error`) and does not count. |
 
@@ -137,7 +137,7 @@ JSON includes `version` (same as `version.txt`), which engines are `loaded`, `un
 ```json
 {
   "status": "ok",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "engines": { "whisper": "loaded", "gigaam": "loaded", "parakeet": "loaded", "nemo": "loaded", "pyannote": "loaded" },
   "device": "cuda",
   "workers": {

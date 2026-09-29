@@ -8,7 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ASR_FAMILIES = ("whisper", "gigaam", "parakeet")
 DIARIZATION_FAMILIES = ("nemo", "pyannote")
-SUPPORTED_UPLOAD_SUFFIXES = (".wav", ".mp3", ".m4a", ".flac", ".ogg", ".webm")
+SUPPORTED_UPLOAD_SUFFIXES = (".wav", ".mp3", ".m4a", ".flac", ".ogg", ".opus", ".webm")
 UPLOAD_SUFFIX_NAMES = tuple(name.lstrip(".") for name in SUPPORTED_UPLOAD_SUFFIXES)
 
 

@@ -77,7 +77,7 @@ def test_allowed_upload_suffixes_subset() -> None:
 
 def test_allowed_upload_suffixes_full_list_normalizes_to_all() -> None:
     settings = Settings(
-        ALLOWED_UPLOAD_SUFFIXES="webm,ogg,flac,m4a,mp3,wav",
+        ALLOWED_UPLOAD_SUFFIXES="webm,opus,ogg,flac,m4a,mp3,wav",
         _env_file=None,
     )
     assert settings.ALLOWED_UPLOAD_SUFFIXES == "all"

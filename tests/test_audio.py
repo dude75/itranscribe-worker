@@ -249,6 +249,24 @@ def test_flac_converts_to_wav(wav_file: Path, tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg не установлен")
+def test_opus_converts_to_wav(wav_file: Path, tmp_path: Path) -> None:
+    opus = tmp_path / "sample.opus"
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", str(wav_file), "-c:a", "libopus", str(opus)],
+        check=True,
+        capture_output=True,
+    )
+    task_id = "audio-opus-1"
+    try:
+        dest = prepare_wav(opus, task_id, tmp_path)
+        assert dest.suffix == ".wav"
+        _assert_mono_16k(dest)
+        assert audio_duration_sec(dest) == pytest.approx(DURATION, abs=0.05)
+    finally:
+        cleanup_tmp(task_id, tmp_path)
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg не установлен")
 def test_webm_converts_to_wav(wav_file: Path, tmp_path: Path) -> None:
     webm = tmp_path / "sample.webm"
     subprocess.run(
