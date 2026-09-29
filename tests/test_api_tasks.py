@@ -82,6 +82,21 @@ def test_transcribe_unauthorized(client: TestClient, wav_bytes: tuple[str, bytes
     assert response.json()["error"]["code"] == "unauthorized"
 
 
+def test_transcribe_rejects_disallowed_suffix(
+    client: TestClient, wav_bytes: tuple[str, bytes], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ALLOWED_UPLOAD_SUFFIXES", "mp3")
+    get_settings.cache_clear()
+    name, payload = wav_bytes
+    response = client.post(
+        "/transcribe",
+        files={"file": (name, payload, "audio/wav")},
+        headers=_auth_headers(),
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_file"
+
+
 def test_transcribe_payload_too_large(
     client: TestClient, wav_bytes: tuple[str, bytes], monkeypatch: pytest.MonkeyPatch
 ) -> None:

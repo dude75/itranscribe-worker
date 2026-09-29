@@ -10,6 +10,7 @@ from typing import BinaryIO
 
 import soundfile as sf
 
+from app.config import get_settings
 from app.schemas import ErrorCode
 
 TMP_PREFIX = "tmp_"
@@ -213,9 +214,6 @@ def _run_ffmpeg(src: Path, dst: Path, timeout_sec: float | int | None) -> None:
         raise RuntimeError(completed.stderr.strip() or "ffmpeg failed")
 
 
-PREPARE_SUFFIXES = {".wav", ".mp3", ".m4a"}
-
-
 def prepare_wav(
     src: str | Path,
     task_id: str,
@@ -227,7 +225,8 @@ def prepare_wav(
     dest_dir = create_tmp(task_id, data_dir)
     dest = dest_dir / "audio.wav"
     suffix = src_path.suffix.lower()
-    if suffix not in PREPARE_SUFFIXES:
+    allowed = get_settings().allowed_upload_suffixes()
+    if suffix not in allowed:
         raise ValueError(f"unsupported audio format: {suffix}")
     _run_ffmpeg(src_path, dest, timeout_sec)
     return dest

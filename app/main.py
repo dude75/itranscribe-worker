@@ -48,9 +48,6 @@ from app.schemas import (
 from app.tasks import TaskRecord
 from app.version import read_version
 
-ALLOWED_SUFFIXES = {".wav", ".mp3", ".m4a"}
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
@@ -206,10 +203,10 @@ async def transcribe(
     _: str = Depends(require_api_token),
     runner: TaskRunner = Depends(get_runner),
 ) -> TaskResponse:
-    suffix = Path(file.filename or "").suffix.lower()
-    if suffix not in ALLOWED_SUFFIXES:
-        raise _http_error(status.HTTP_400_BAD_REQUEST, ErrorCode.invalid_file)
     settings = get_settings()
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in settings.allowed_upload_suffixes():
+        raise _http_error(status.HTTP_400_BAD_REQUEST, ErrorCode.invalid_file)
     scratch_dir = Path(settings.DATA_DIR)
     scratch_dir.mkdir(parents=True, exist_ok=True)
     scratch = scratch_dir / f".upload_{uuid.uuid4()}{suffix}"

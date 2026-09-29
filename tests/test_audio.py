@@ -154,6 +154,25 @@ def test_cleanup_all_tmp_removes_leftovers(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg не установлен")
+def test_prepare_wav_rejects_disallowed_suffix(
+    wav_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mp3 = tmp_path / "sample.mp3"
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", str(wav_file), str(mp3)],
+        check=True,
+        capture_output=True,
+    )
+    monkeypatch.setenv("ALLOWED_UPLOAD_SUFFIXES", "wav")
+    get_settings.cache_clear()
+    try:
+        with pytest.raises(ValueError, match="unsupported audio format: .mp3"):
+            prepare_wav(mp3, "audio-disallowed-mp3", tmp_path)
+    finally:
+        get_settings.cache_clear()
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg не установлен")
 def test_mp3_converts_to_wav(wav_file: Path, tmp_path: Path) -> None:
     mp3 = tmp_path / "sample.mp3"
     subprocess.run(
@@ -191,6 +210,60 @@ def test_m4a_converts_to_wav(wav_file: Path, tmp_path: Path) -> None:
     finally:
         cleanup_tmp(task_id, tmp_path)
     assert not tmp_dir(task_id, tmp_path).exists()
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg не установлен")
+def test_ogg_converts_to_wav(wav_file: Path, tmp_path: Path) -> None:
+    ogg = tmp_path / "sample.ogg"
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", str(wav_file), str(ogg)],
+        check=True,
+        capture_output=True,
+    )
+    task_id = "audio-ogg-1"
+    try:
+        dest = prepare_wav(ogg, task_id, tmp_path)
+        assert dest.suffix == ".wav"
+        _assert_mono_16k(dest)
+        assert audio_duration_sec(dest) == pytest.approx(DURATION, abs=0.05)
+    finally:
+        cleanup_tmp(task_id, tmp_path)
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg не установлен")
+def test_flac_converts_to_wav(wav_file: Path, tmp_path: Path) -> None:
+    flac = tmp_path / "sample.flac"
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", str(wav_file), "-c:a", "flac", str(flac)],
+        check=True,
+        capture_output=True,
+    )
+    task_id = "audio-flac-1"
+    try:
+        dest = prepare_wav(flac, task_id, tmp_path)
+        assert dest.suffix == ".wav"
+        _assert_mono_16k(dest)
+        assert audio_duration_sec(dest) == pytest.approx(DURATION, abs=0.05)
+    finally:
+        cleanup_tmp(task_id, tmp_path)
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg не установлен")
+def test_webm_converts_to_wav(wav_file: Path, tmp_path: Path) -> None:
+    webm = tmp_path / "sample.webm"
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", str(wav_file), "-c:a", "libopus", str(webm)],
+        check=True,
+        capture_output=True,
+    )
+    task_id = "audio-webm-1"
+    try:
+        dest = prepare_wav(webm, task_id, tmp_path)
+        assert dest.suffix == ".wav"
+        _assert_mono_16k(dest)
+        assert audio_duration_sec(dest) == pytest.approx(DURATION, abs=0.05)
+    finally:
+        cleanup_tmp(task_id, tmp_path)
 
 
 class _FfmpegOk:

@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from app.config import Settings
+from app.config import SUPPORTED_UPLOAD_SUFFIXES, Settings
 from app.engines.cache import EngineCache
 from app.pipeline import TaskFailed
 from app.schemas import AsrModel, DiarizationModel, EngineStatus, ErrorCode
@@ -65,6 +65,32 @@ def test_preload_defaults_all() -> None:
     assert settings.WORKERS == 1
     assert settings.asr_families_to_preload() == ("whisper", "gigaam", "parakeet")
     assert settings.diarization_families_to_preload() == ("nemo", "pyannote")
+    assert settings.ALLOWED_UPLOAD_SUFFIXES == "all"
+    assert settings.allowed_upload_suffixes() == frozenset(SUPPORTED_UPLOAD_SUFFIXES)
+
+
+def test_allowed_upload_suffixes_subset() -> None:
+    settings = Settings(ALLOWED_UPLOAD_SUFFIXES=" wav , .MP3 ", _env_file=None)
+    assert settings.ALLOWED_UPLOAD_SUFFIXES == "wav,mp3"
+    assert settings.allowed_upload_suffixes() == frozenset({".wav", ".mp3"})
+
+
+def test_allowed_upload_suffixes_full_list_normalizes_to_all() -> None:
+    settings = Settings(
+        ALLOWED_UPLOAD_SUFFIXES="webm,ogg,flac,m4a,mp3,wav",
+        _env_file=None,
+    )
+    assert settings.ALLOWED_UPLOAD_SUFFIXES == "all"
+    assert settings.allowed_upload_suffixes() == frozenset(SUPPORTED_UPLOAD_SUFFIXES)
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["wav,all", "", ",", "wma"],
+)
+def test_allowed_upload_suffixes_rejects_invalid(value: str) -> None:
+    with pytest.raises(ValidationError):
+        Settings(ALLOWED_UPLOAD_SUFFIXES=value, _env_file=None)
 
 
 def test_device_normalizes_case() -> None:

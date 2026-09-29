@@ -8,6 +8,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ASR_FAMILIES = ("whisper", "gigaam", "parakeet")
 DIARIZATION_FAMILIES = ("nemo", "pyannote")
+SUPPORTED_UPLOAD_SUFFIXES = (".wav", ".mp3", ".m4a", ".flac", ".ogg", ".webm")
+UPLOAD_SUFFIX_NAMES = tuple(name.lstrip(".") for name in SUPPORTED_UPLOAD_SUFFIXES)
 
 
 def _normalize_family_list(
@@ -43,6 +45,37 @@ def _families_from_preload(value: str, allowed: tuple[str, ...]) -> tuple[str, .
         return allowed
     wanted = set(value.split(","))
     return tuple(name for name in allowed if name in wanted)
+
+
+def _normalize_upload_suffix_list(value: object, *, field: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a string")
+    tokens: list[str] = []
+    for raw in value.split(","):
+        token = raw.strip().lower().strip("'\"")
+        if token.startswith("."):
+            token = token[1:]
+        if token:
+            tokens.append(token)
+    if not tokens:
+        raise ValueError(f"{field} must not be empty")
+    unknown = [token for token in tokens if token not in UPLOAD_SUFFIX_NAMES and token != "all"]
+    if unknown:
+        raise ValueError(f"{field} unknown suffix: {unknown[0]}")
+    if "all" in tokens:
+        if len(tokens) > 1:
+            raise ValueError(f"{field} cannot mix all with other suffixes")
+        return "all"
+    selected = tuple(name for name in UPLOAD_SUFFIX_NAMES if name in tokens)
+    if selected == UPLOAD_SUFFIX_NAMES:
+        return "all"
+    return ",".join(selected)
+
+
+def _suffixes_from_allowed(value: str) -> frozenset[str]:
+    if value == "all":
+        return frozenset(SUPPORTED_UPLOAD_SUFFIXES)
+    return frozenset(f".{name}" for name in value.split(","))
 
 
 class Settings(BaseSettings):
@@ -82,6 +115,7 @@ class Settings(BaseSettings):
     WORKERS: int = Field(default=1, validation_alias=AliasChoices("WORKERS", "WORKERS_MAX"))
     WORKER_QUEUE_SIZE: int = 4
     MAX_UPLOAD_BYTES: int = 1024 ** 3
+    ALLOWED_UPLOAD_SUFFIXES: str = "all"
     TASK_TTL_SEC: int = 3600
     FFMPEG_TIMEOUT_SEC: int = 120
     TASK_TIMEOUT_SEC: int = 14400
@@ -96,6 +130,11 @@ class Settings(BaseSettings):
     @classmethod
     def _normalize_preload_diarization(cls, value: object) -> object:
         return _normalize_family_list(value, DIARIZATION_FAMILIES, field="PRELOAD_DIARIZATION")
+
+    @field_validator("ALLOWED_UPLOAD_SUFFIXES", mode="before")
+    @classmethod
+    def _normalize_allowed_upload_suffixes(cls, value: object) -> object:
+        return _normalize_upload_suffix_list(value, field="ALLOWED_UPLOAD_SUFFIXES")
 
     @field_validator("DEVICE", mode="before")
     @classmethod
@@ -158,6 +197,9 @@ class Settings(BaseSettings):
 
     def diarization_families_to_preload(self) -> tuple[str, ...]:
         return _families_from_preload(self.PRELOAD_DIARIZATION, DIARIZATION_FAMILIES)
+
+    def allowed_upload_suffixes(self) -> frozenset[str]:
+        return _suffixes_from_allowed(self.ALLOWED_UPLOAD_SUFFIXES)
 
 
 @lru_cache

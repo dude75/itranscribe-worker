@@ -6,7 +6,7 @@
 
 ## Что это
 
-- На вход: WAV, MP3 или M4A.
+- На вход: WAV, MP3, M4A, FLAC, OGG или WebM.
 - На выход: **линейный** список реплик (`speaker`, `start`, `end`, `text`) — в один момент одна фраза, без параллельных реплик в JSON. Без диаризации `speaker` равен `null`.
 - На каждой задаче выбирается комбинация:
   - ASR: `whisper`, `gigaam` или `parakeet` (обязательно)
@@ -87,8 +87,9 @@ Docker: [Docker Compose](#docker-compose) (образы CPU или NVIDIA GPU).
 | `WORKERS_MAX`             | Синоним `WORKERS` (то же значение). В `GET /health` попадает в `workers.max` для Capacity в [idigest-hub](https://github.com/dude75/idigest-hub).                                                                                                    |
 | `WORKER_QUEUE_SIZE`       | Сколько задач может висеть в `queued`. По умолчанию `4`. Сверх лимита: `503` `queue_full`.                                                                                                                                                           |
 | `MAX_UPLOAD_BYTES`        | Максимум тела `POST /transcribe` в байтах (`Content-Length` и стрим файла). По умолчанию `1073741824` (1 GiB). Сверх лимита: HTTP **413** `payload_too_large`.                                                                                        |
+| `ALLOWED_UPLOAD_SUFFIXES` | Расширения загрузки: `all` (по умолчанию — wav, mp3, m4a, flac, ogg, webm) или подмножество через запятую (`wav,mp3,m4a`). Неизвестные значения — ошибка при старте. Запрещённое расширение — HTTP **400** `invalid_file`.                        |
 | `TASK_TTL_SEC`            | Через сколько секунд после `success`/`error` удалить строку из SQLite. `0` — не удалять по TTL (только `DELETE`).                                                                                                                                    |
-| `FFMPEG_TIMEOUT_SEC`      | Сколько секунд дать ffmpeg на нормализацию любой загрузки (WAV/MP3/M4A) в моно 16 кГц WAV. По умолчанию `120`. По таймауту задача уходит в `error` с кодом `ffmpeg_timeout`, процесс ffmpeg убивается. `0` — без лимита.                               |
+| `FFMPEG_TIMEOUT_SEC`      | Сколько секунд дать ffmpeg на нормализацию любой загрузки (WAV/MP3/M4A/FLAC/OGG/WebM) в моно 16 кГц WAV. По умолчанию `120`. По таймауту задача уходит в `error` с кодом `ffmpeg_timeout`, процесс ffmpeg убивается. `0` — без лимита.                               |
 | `TASK_TIMEOUT_SEC`        | Сколько секунд дать всей задаче (ffmpeg + ASR + диаризация + alignment). По умолчанию `14400` (4 часа). По таймауту задача уходит в `error` с кодом `task_timeout`; текущий этап доигрывается, следующие не стартуют. Нативный инференс посреди вызова не прерывается. `0` — без лимита. |
 | `TASK_MAX_RESTARTS`       | Сколько раз задачу, найденную в `running` после смерти процесса, вернуть в `queued`. По умолчанию `1` (одна повторная попытка). Дальше — `error` с кодом `process_killed`. `0` — сразу ошибка при первом restore. CUDA OOM — обычное Python-исключение (`pipeline_error`), в этот счётчик не входит. |
 
