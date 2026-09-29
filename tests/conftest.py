@@ -2,11 +2,22 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Iterator
 
 import pytest
 
 from app.config import get_settings
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    if sys.version_info[:2] != (3, 12):
+        pytest.exit(
+            f"Tests require Python 3.12 (same as Docker); got {sys.version.split()[0]}. "
+            "Use: python3.12 -m venv .venv && ./.venv/bin/pip install -r requirements.txt "
+            "-r requirements-ml.txt",
+            returncode=1,
+        )
 
 
 @pytest.fixture(scope="session", autouse=True)

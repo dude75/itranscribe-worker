@@ -43,6 +43,16 @@ Create a `.env` in the repo root (see table below). Do not commit it. Then:
 
 Always keep **uvicorn** `--workers 1`. Parallelism of jobs is `WORKERS` in `.env` (slots inside this one process), not extra uvicorn processes.
 
+## Tests
+
+Same Python as production image (**3.12** only). From the repo root:
+
+```bash
+PYTHONPATH=. ./.venv/bin/python -m pytest
+```
+
+Optional: `pytest -m "not ml"` skips integration tests that need a full GPU/ML stack; default CI/local dev uses all deps from `requirements-ml.txt`.
+
 First start **preloads** the families chosen by `PRELOAD_ASR` and `PRELOAD_DIARIZATION` (default `all` = all ASR and diarization families). For each family the first replica uses `MODELS_DIR` if the weights are already there, otherwise it downloads from Hugging Face; the remaining `WORKERS` replicas of that family load only from that cache (no Hub etag). Weights for skipped families are not downloaded. A failed engine is `unavailable`; a skipped one is `disabled`. The process stays up. The first real task should not download weights again if they already sit in `./data/models`.
 
 Check:
