@@ -15,6 +15,8 @@ See the full Russian reference (same structure): [llm-interpretation.ru.md](./ll
 
 - Tone runs **after** ASR, optional diarization, and alignment on `transcript[]` lines.
 - Request: `tone=true` on `POST /transcribe` plus non-empty layers in `.env` (`TONE_TEXT_MODEL`, `TONE_PROSODY`, `TONE_SER_MODEL`).
+- **`meta.tone_text_model`**, **`meta.tone_ser_model`**: HF ids configured on the server when the task was created (`null` if the layer is off).
+- **`meta.tone_prosody_param`**: comma-separated prosody features (e.g. `energy,f0`), not a `preset:*` label (`null` if `TONE_PROSODY` is empty).
 - **`meta.tone_layers`**: layers that **actually** ran. Unavailable preload (text/ser) is **skipped** with a server warning; the task still succeeds.
 - **`meta.tone_skipped`**: `true` if tone was requested but no layers in `.env`, or no layer could be applied.
 

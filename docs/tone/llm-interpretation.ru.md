@@ -13,6 +13,8 @@ when_to_use: >-
 
 - Tone считается **после** ASR, diarization (если была) и alignment — на **готовых репликах** `transcript[]`.
 - Включение: `tone=true` в `POST /transcribe` + непустые слои в `.env` (`TONE_TEXT_MODEL`, `TONE_PROSODY`, `TONE_SER_MODEL`).
+- **`meta.tone_text_model`**, **`meta.tone_ser_model`** — HF id, зафиксированные при создании задачи (`null`, если слой выключен в `.env`).
+- **`meta.tone_prosody_param`** — список фич просодии через запятую (например `energy,f0`), без `preset:*` (`null`, если `TONE_PROSODY` пустой).
 - **`meta.tone_layers`** — какие слои **реально** отработали (например `["text", "prosody", "ser"]`). Если слой в `.env` есть, но preload был `unavailable`, он **пропускается** (warning в логах сервера), пайплайн не падает.
 - **`meta.tone_skipped`**: `true` — tone запросили, но нечего считать (нет слоёв в `.env`) или **ни один** настроенный слой не применился.
 
@@ -24,7 +26,7 @@ when_to_use: >-
 
 ```text
 task
-├── meta.tone_requested, meta.tone_layers, meta.tone_skipped, meta.tone_time_sec, ...
+├── meta.tone_requested, meta.tone_text_model, meta.tone_ser_model, meta.tone_prosody_param, meta.tone_layers, meta.tone_skipped, meta.tone_time_sec, ...
 ├── call_summary?          # сводка по звонку (если есть valence на репликах)
 └── transcript[]
     └── tone?              # UtteranceTone на одну реплику

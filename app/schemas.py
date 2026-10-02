@@ -144,6 +144,9 @@ class TaskMeta(BaseModel):
     total_time_sec: float | None = None
     rtf: float | None = None
     tone_requested: bool = False
+    tone_text_model: str | None = None
+    tone_ser_model: str | None = None
+    tone_prosody_param: str | None = None
     tone_layers: list[str] | None = None
     tone_skipped: bool | None = None
     tone_time_sec: float | None = None

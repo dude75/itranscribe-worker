@@ -45,6 +45,9 @@ class TaskRecord:
     transcript: list[dict[str, Any]] | None = None
     call_summary: dict[str, Any] | None = None
     tone_requested: bool = False
+    tone_text_model: str | None = None
+    tone_ser_model: str | None = None
+    tone_prosody_param: str | None = None
     tone_layers: list[str] | None = None
     tone_skipped: bool | None = None
     tone_time_sec: float | None = None
@@ -140,6 +143,12 @@ class TaskStore:
                 ("call_summary", "ALTER TABLE tasks ADD COLUMN call_summary TEXT"),
                 ("tone_layers", "ALTER TABLE tasks ADD COLUMN tone_layers TEXT"),
                 ("tone_skipped", "ALTER TABLE tasks ADD COLUMN tone_skipped INTEGER"),
+                ("tone_text_model", "ALTER TABLE tasks ADD COLUMN tone_text_model TEXT"),
+                ("tone_ser_model", "ALTER TABLE tasks ADD COLUMN tone_ser_model TEXT"),
+                (
+                    "tone_prosody_param",
+                    "ALTER TABLE tasks ADD COLUMN tone_prosody_param TEXT",
+                ),
             ):
                 if col not in columns:
                     self._conn.execute(ddl)
@@ -168,6 +177,9 @@ class TaskStore:
         diarization_checkpoint: str | None,
         upload_path: str,
         tone_requested: bool = False,
+        tone_text_model: str | None = None,
+        tone_ser_model: str | None = None,
+        tone_prosody_param: str | None = None,
     ) -> TaskRecord:
         timestamp = _now()
         with self._lock:
@@ -175,8 +187,9 @@ class TaskStore:
                 """
                 INSERT INTO tasks (
                     task_id, status, timestamp, asr_model, diarization_model,
-                    asr_checkpoint, diarization_checkpoint, upload_path, tone_requested
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    asr_checkpoint, diarization_checkpoint, upload_path, tone_requested,
+                    tone_text_model, tone_ser_model, tone_prosody_param
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     task_id,
@@ -188,6 +201,9 @@ class TaskStore:
                     diarization_checkpoint,
                     upload_path,
                     int(tone_requested),
+                    tone_text_model,
+                    tone_ser_model,
+                    tone_prosody_param,
                 ),
             )
             self._conn.commit()
@@ -470,6 +486,13 @@ def _row_to_record(row: sqlite3.Row) -> TaskRecord:
         transcript=transcript,
         call_summary=_decode_summary(row["call_summary"]) if "call_summary" in row.keys() else None,
         tone_requested=_tone_requested_from_row(row),
+        tone_text_model=(
+            row["tone_text_model"] if "tone_text_model" in row.keys() else None
+        ),
+        tone_ser_model=row["tone_ser_model"] if "tone_ser_model" in row.keys() else None,
+        tone_prosody_param=(
+            row["tone_prosody_param"] if "tone_prosody_param" in row.keys() else None
+        ),
         tone_layers=(
             json.loads(row["tone_layers"])
             if "tone_layers" in row.keys() and row["tone_layers"]

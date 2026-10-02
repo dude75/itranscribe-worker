@@ -14,6 +14,7 @@ PROSODY_PRESETS: dict[str, tuple[str, ...]] = {
     "standard": ("energy", "f0"),
     "extended": ("energy", "f0", "tempo", "pauses"),
 }
+PROSODY_FEATURE_ORDER = ("energy", "f0", "tempo", "pauses")
 SUPPORTED_UPLOAD_SUFFIXES = (".wav", ".mp3", ".m4a", ".flac", ".ogg", ".opus", ".webm")
 UPLOAD_SUFFIX_NAMES = tuple(name.lstrip(".") for name in SUPPORTED_UPLOAD_SUFFIXES)
 
@@ -281,11 +282,17 @@ class Settings(BaseSettings):
             for token in raw.split(",")
             if token.strip()
         )
-        allowed = frozenset({"energy", "f0", "tempo", "pauses"})
+        allowed = frozenset(PROSODY_FEATURE_ORDER)
         unknown = features - allowed
         if unknown:
             raise ValueError(f"TONE_PROSODY unknown feature: {next(iter(unknown))}")
         return features
+
+    def tone_prosody_param(self) -> str | None:
+        features = self.prosody_features()
+        if not features:
+            return None
+        return ",".join(name for name in PROSODY_FEATURE_ORDER if name in features)
 
     def allowed_upload_suffixes(self) -> frozenset[str]:
         return _suffixes_from_allowed(self.ALLOWED_UPLOAD_SUFFIXES)

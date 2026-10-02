@@ -130,6 +130,7 @@ class TaskRunner:
             dest = tmp / f"upload{src.suffix.lower()}"
             await asyncio.to_thread(place_upload, src, dest)
             asr_ckpt, diar_ckpt = checkpoints_for(self.settings, asr_model, diarization_model)
+            settings = self.settings
             record = self.store.create(
                 task_id,
                 asr_model,
@@ -138,6 +139,13 @@ class TaskRunner:
                 diar_ckpt,
                 str(dest),
                 tone_requested=tone_requested,
+                tone_text_model=(
+                    settings.TONE_TEXT_MODEL if settings.tone_text_configured() else None
+                ),
+                tone_ser_model=(
+                    settings.TONE_SER_MODEL if settings.tone_ser_configured() else None
+                ),
+                tone_prosody_param=settings.tone_prosody_param(),
             )
             await self._queue.put(task_id)
             observe_submitted(

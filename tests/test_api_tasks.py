@@ -141,6 +141,32 @@ def test_transcribe_tone_defaults_false(client: TestClient, wav_bytes: tuple[str
     assert created.json()["meta"]["tone_requested"] is False
 
 
+def test_transcribe_meta_includes_tone_config_snapshot(
+    tmp_path: Path, wav_bytes: tuple[str, bytes], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("API_TOKEN", "test")
+    monkeypatch.setenv("ITRANSCRIBE_STUBS", "1")
+    monkeypatch.setenv("SQLITE_PATH", str(tmp_path / "tasks.db"))
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setenv("PERFORMANCE_LOG", str(tmp_path / "logs" / "performance_log.csv"))
+    monkeypatch.setenv("WORKERS", "1")
+    monkeypatch.setenv("WORKER_QUEUE_SIZE", "1")
+    monkeypatch.setenv("TONE_TEXT_MODEL", "example/text-tone")
+    monkeypatch.setenv("TONE_SER_MODEL", "example/ser-tone")
+    monkeypatch.setenv("TONE_PROSODY", "preset:standard")
+    get_settings.cache_clear()
+    with TestClient(app) as client:
+        created = _post_transcribe(client, wav_bytes, asr_model="parakeet", tone="true")
+        assert created.status_code == 202
+        meta = created.json()["meta"]
+        assert meta["asr_model"] == "parakeet"
+        assert meta["tone_text_model"] == "example/text-tone"
+        assert meta["tone_ser_model"] == "example/ser-tone"
+        assert meta["tone_prosody_param"] == "energy,f0"
+    get_settings.cache_clear()
+
+
 def test_transcribe_rejects_invalid_tone(client: TestClient, wav_bytes: tuple[str, bytes]) -> None:
     response = _post_transcribe(client, wav_bytes, tone="full")
     assert response.status_code == 422

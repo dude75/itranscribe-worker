@@ -45,6 +45,12 @@ def test_prosody_presets() -> None:
     assert extended.prosody_features() == frozenset({"energy", "f0", "tempo", "pauses"})
     empty = Settings(TONE_PROSODY="", _env_file=None)
     assert empty.prosody_features() is None
+    assert empty.tone_prosody_param() is None
+    assert settings.tone_prosody_param() == "energy"
+    assert standard.tone_prosody_param() == "energy,f0"
+    assert extended.tone_prosody_param() == "energy,f0,tempo,pauses"
+    custom = Settings(TONE_PROSODY="pauses, energy", _env_file=None)
+    assert custom.tone_prosody_param() == "energy,pauses"
     with pytest.raises(ValidationError):
         Settings(TONE_PROSODY="preset:unknown", _env_file=None)
 
