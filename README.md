@@ -9,9 +9,9 @@ On-premise **ASR + optional speaker diarization** HTTP service. Submit an audio 
 - Input: WAV, MP3, M4A, FLAC, OGG, Opus, or WebM.
 - Output: a **linear** list of utterances (`speaker`, `start`, `end`, `text`) — one phrase at a time, not overlapping JSON. Without diarization, `speaker` is `null`.
 - Each task chooses a combination:
-  - ASR: `whisper`, `gigaam`, or `parakeet` (required)
+  - ASR: `whisper` or `parakeet` (required)
   - Diarization: `nemo` or `pyannote`, or **omit / empty** to skip diarization (transcription only)
-- Concrete checkpoints (Whisper size, GigaAM name, Parakeet NeMo id, PyAnnote pipeline, NeMo diarization models) are set in `.env`, not in the request body.
+- Concrete checkpoints (Whisper size, Parakeet NeMo id, PyAnnote pipeline, NeMo diarization models) are set in `.env`, not in the request body.
 - One Python process: each `WORKERS` slot is a full in-memory copy of every model loaded by `PRELOAD_*`. Files on disk are not duplicated.
 
 `POST /transcribe` returns **202** with a `task_id`. Fetch the result from `/tasks`.
@@ -21,7 +21,7 @@ On-premise **ASR + optional speaker diarization** HTTP service. Submit an audio 
 - Python **3.12** (not 3.13/3.14; do not use system `python3` if it is another version)
 - Virtualenv at `.venv`: use `./.venv/bin/python` and `./.venv/bin/pip` only
 - **pip 25.3** — install into the venv before `requirements*.txt` (same as Docker)
-- **ffmpeg** on `PATH` (all uploads → mono 16 kHz WAV, GigaAM longform)
+- **ffmpeg** on `PATH` (all uploads → mono 16 kHz WAV)
 - Hugging Face account + **accepted licenses** for PyAnnote 3.1 (`pyannote/speaker-diarization-3.1` and its dependencies). Set `HF_TOKEN` in `.env` (the same token downloads Sortformer from Hugging Face). Without a token/license, PyAnnote is unavailable.
 - Disk under `./data` for model weights, SQLite, logs, and the task queue tmp (not committed)
 
@@ -74,7 +74,7 @@ Copy names into `.env`. **Do not put real tokens in git or in this README.** Cha
 | Variable                  | Meaning                                                                                                                                                                                                                                     |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `API_TOKEN`               | Bearer key for all routes except `/health`. Empty = nobody is authorized. Not the same as `HF_TOKEN`. Also the key that seals `transcript` in SQLite (see below).                                                                              |
-| `HF_TOKEN`                | Hugging Face token: download PyAnnote, VAD used by GigaAM longform, and the NeMo Sortformer checkpoint.                                                                                                                                     |
+| `HF_TOKEN`                | Hugging Face token: download PyAnnote, Parakeet/NeMo checkpoints, and tone models when configured.                                                                                                                                          |
 | `HOST`                    | Bind address (`127.0.0.1` locally; Docker uses `0.0.0.0`).                                                                                                                                                                                  |
 | `PORT`                    | HTTP port (default `8000`).                                                                                                                                                                                                                 |
 | `DATA_DIR`                | Persistent root (default `./data`): models, SQLite, logs, and queue tmp at `{DATA_DIR}/tmp/<task_id>/`.                                                                                                                                     |
@@ -88,12 +88,11 @@ Copy names into `.env`. **Do not put real tokens in git or in this README.** Cha
 | `PERFORMANCE_LOG_ENABLED` | CSV row + JSON `metric_event` on stdout when a task finishes. Default `true`. `false` / `0` / `no` = off. Does not affect app logs.                                                                                                         |
 | `METRICS_ENABLED`         | Application Prometheus metrics on `GET /metrics`. Default `true`. `false` / `0` / `no` = process collectors only; the endpoint stays up.                                                                                                    |
 | `WHISPER_MODEL`           | Faster-Whisper checkpoint name (default `large-v3-turbo`).                                                                                                                                                                                  |
-| `GIGAAM_MODEL`            | `gigaam.load_model` name (default `multilingual_large_ctc`).                                                                                                                                                                                |
 | `PARAKEET_MODEL`          | NeMo ASR checkpoint id (default `nvidia/parakeet-tdt-0.6b-v3`). Multilingual with punctuation.                                                                                                                                              |
 | `PARAKEET_CHUNK_SEC`      | Max seconds per Parakeet `transcribe()` call (default `1380`, ~23 min). Longer audio is split with ffmpeg and timestamps merged.                                                                                                            |
 | `PYANNOTE_MODEL`          | PyAnnote pipeline id (default `pyannote/speaker-diarization-3.1`).                                                                                                                                                                          |
 | `NEMO_MODEL`              | Hugging Face id of Sortformer for the `nemo` family (default `nvidia/diar_streaming_sortformer_4spk-v2`, CC-BY-4.0). Maximum 4 speakers.                                                                                                    |
-| `PRELOAD_ASR`             | Which ASR families to load and download at startup: `whisper`, `gigaam`, `parakeet`, `all` (default), or a comma-separated subset (`whisper,parakeet`).                                                                                                                                     |
+| `PRELOAD_ASR`             | Which ASR families to load and download at startup: `whisper`, `parakeet`, `all` (default), or a comma-separated subset (`whisper,parakeet`).                                                                                                                                              |
 | `PRELOAD_DIARIZATION`     | Which diarization families to load and download at startup: `nemo`, `pyannote`, `all` (default), or a comma-separated subset (`nemo,pyannote`).                                                                                                                                         |
 | `TONE_TEXT_MODEL`         | Hugging Face id for text emotions. **Empty** — layer off.                                                                                                                                                                                                                               |
 | `TONE_PROSODY`            | **Empty** — layer off. Else presets or `energy,f0,tempo,pauses`. Values go on `transcript[].tone.prosody` (no extra timeline rows): **energy** loudness; **f0** pitch; **tempo** words/sec; **pauses** → `pause_before_sec` (gap before same `speaker`). |
@@ -166,7 +165,7 @@ JSON includes `version` (same as `version.txt`), which engines are `loaded`, `un
 {
   "status": "ok",
   "version": "0.1.3",
-  "engines": { "whisper": "loaded", "gigaam": "loaded", "parakeet": "loaded", "nemo": "loaded", "pyannote": "loaded" },
+  "engines": { "whisper": "loaded", "parakeet": "loaded", "nemo": "loaded", "pyannote": "loaded", "tone_text": "disabled", "tone_ser": "disabled" },
   "device": "cuda",
   "workers": {
     "max": 2,
@@ -217,7 +216,7 @@ curl -sS -X POST "$HOST/transcribe" \
   -F "diarization_model=pyannote"
 ```
 
-`asr_model`: `whisper` (default), `gigaam`, or `parakeet`.  
+`asr_model`: `whisper` (default) or `parakeet`.  
 `diarization_model`: `nemo` (Sortformer, max 4 speakers) or `pyannote`. Omit the field or send it empty to skip diarization (ASR only). There is no default family — missing/empty means no speaker map. For long files where speed matters, send `nemo`. Use `pyannote` when its speaker map matters more than minimum runtime.
 
 `tone`: `true` or `false` (default `false`). When `true`, runs every **non-empty** tone layer from `.env` (`TONE_TEXT_MODEL`, `TONE_PROSODY`, `TONE_SER_MODEL`) **independently**: if text/ser preload is **unavailable**, that layer is **skipped** (warning in logs); other layers and the transcript still succeed. No layers in `.env` behaves like `false` with `meta.tone_skipped=true`. If every configured layer is unavailable — still `success` with `meta.tone_skipped=true` and no `tone_layers` applied. Optional `tone` on each line, optional `call_summary`, `meta.tone_layers` on success. Field semantics for humans/LLMs: [docs/tone/llm-interpretation.md](docs/tone/llm-interpretation.md).
@@ -355,11 +354,10 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml down
 | HTTP **200**, `status=error`, `error.code = process_killed`     | Process died while the task was `running` more times than `TASK_MAX_RESTARTS` (kernel OOM-kill / native segfault). The worker stays up. CUDA OOM is `pipeline_error`. |
 | HTTP **200**, `status=error`, `error.code = ffmpeg_timeout`     | ffmpeg did not finish normalizing the upload to mono 16 kHz WAV within `FFMPEG_TIMEOUT_SEC`. The converter process is killed; the worker slot is freed. |
 | HTTP **200**, `status=error`, `error.code = task_timeout`       | The task did not finish within `TASK_TIMEOUT_SEC` (default 4 hours). Remaining stages are skipped; the worker slot is freed after the current stage returns. |
-| HTTP **422**                                                    | Invalid `asr_model` / `diarization_model` (`whisper`/`gigaam`/`parakeet`; `nemo`/`pyannote`). Empty `diarization_model` is valid (skip diarization). |
-| `pip install` / GigaAM: `No matching distribution found for onnxruntime==1.23.*` | Usually the venv is not **Python 3.12** (e.g. 3.14). Recreate: `python3.12 -m venv .venv`, `pip==25.3`, then `requirements*.txt`. |
-| `gigaam[longform]` vs `transformers==4.57.3` | This repo installs **base** `gigaam` plus `numba`/`pyarrow` for `transcribe_longform`. Do not `pip install gigaam[longform]` yourself — the extra pins `transformers==5.*` and conflicts with tone. |
+| HTTP **422**                                                    | Invalid `asr_model` / `diarization_model` (`whisper`/`parakeet`; `nemo`/`pyannote`). Empty `diarization_model` is valid (skip diarization). |
+| `pip install` fails on ML deps                                  | Usually the venv is not **Python 3.12** (e.g. 3.14). Recreate: `python3.12 -m venv .venv`, `pip==25.3`, then `requirements*.txt`. |
 | Whisper / `pipeline_error`: `open() got an unexpected keyword argument 'metadata_errors'` | **PyAV 19** (`av==19`) is installed; faster-whisper 1.2.x needs **`av>=14.2,<19`** (see `requirements-ml.txt`): `./.venv/bin/pip install 'av>=14.2.0,<19'`. |
-| UserWarning: `torchcodec is not installed correctly` (macOS) | **torchcodec 0.10** targets FFmpeg **4–8**; Homebrew often ships **9** (`libavutil.61`). Uploads are normalized to **mono 16 kHz WAV** via the ffmpeg CLI; PyAnnote/GigaAM VAD read WAV through **soundfile**, not torchcodec. Safe to ignore on import. For a working torchcodec, install FFmpeg 8 (`brew install ffmpeg@8`) and point `DYLD_LIBRARY_PATH` at its `lib`. |
+| UserWarning: `torchcodec is not installed correctly` (macOS) | **torchcodec 0.10** targets FFmpeg **4–8**; Homebrew often ships **9** (`libavutil.61`). Uploads are normalized to **mono 16 kHz WAV** via the ffmpeg CLI; PyAnnote reads WAV through **soundfile**, not torchcodec. Safe to ignore on import. For a working torchcodec, install FFmpeg 8 (`brew install ffmpeg@8`) and point `DYLD_LIBRARY_PATH` at its `lib`. |
 | `Permission denied` on `/data/...` (`tasks.db`, `models`, `logs`, `tmp`) | Host `./data` is not writable by uid 1001. Run `sudo chown -R 1001:1001 ./data` and restart. Do not chmod `777`. |
 
 

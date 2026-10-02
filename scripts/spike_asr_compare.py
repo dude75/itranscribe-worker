@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Сравнение ASR: whisper vs gigaam vs parakeet на одном файле."""
+"""Сравнение ASR: whisper vs parakeet на одном файле."""
 
 from __future__ import annotations
 
@@ -98,50 +98,6 @@ def _run_whisper(wav: Path, models_dir: str, device: str, dtype: str, model_name
     return RunResult("whisper", model_name, load_sec, infer_sec, duration, len(words), _preview(text))
 
 
-def _run_gigaam(
-    wav: Path, models_dir: str, device: str, model_name: str, hf_token: str
-) -> RunResult:
-    """GigaAM longform: pyannote VAD читает файл через torchcodec (часто ломается на macOS).
-
-    Для spike на коротком клипе VAD пропускаем — один сегмент через ffmpeg load_audio.
-    Сравниваем чистую скорость ASR, как в пайплайне после prepare_wav.
-    """
-    from app.audio import audio_duration_sec
-    from app.engines.asr.gigaam import GigaAMASR
-    from app.engines.base import words_from_asr_segments
-    import gigaam.vad_utils as vad_utils
-    from gigaam.preprocess import SAMPLE_RATE, load_audio
-
-    duration = audio_duration_sec(wav)
-
-    def _segment_whole(wav_file: str, sr: int, **kwargs):
-        audio = load_audio(wav_file)
-        end = audio.shape[0] / sr
-        return [audio], [(0.0, end)]
-
-    t0 = time.perf_counter()
-    try:
-        engine = GigaAMASR(model_name, models_dir, hf_token=hf_token, device=device)
-    except Exception as exc:
-        return RunResult("gigaam", model_name, 0, 0, duration, 0, "", str(exc))
-    load_sec = time.perf_counter() - t0
-
-    t0 = time.perf_counter()
-    original = vad_utils.segment_audio_file
-    vad_utils.segment_audio_file = _segment_whole
-    try:
-        result = engine._model.transcribe_longform(str(wav), word_timestamps=True)
-        segments = getattr(result, "segments", result)
-        words = words_from_asr_segments(segments)
-    except Exception as exc:
-        return RunResult("gigaam", model_name, load_sec, 0, duration, 0, "", str(exc))
-    finally:
-        vad_utils.segment_audio_file = original
-    infer_sec = time.perf_counter() - t0
-    text = " ".join(w.text for w in words)
-    return RunResult("gigaam", model_name, load_sec, infer_sec, duration, len(words), _preview(text))
-
-
 def _run_parakeet(
     wav: Path, models_dir: str, device: str, model_name: str, chunk_sec: float, hf_token: str
 ) -> RunResult:
@@ -202,7 +158,7 @@ def main() -> None:
         os.environ["HUGGING_FACE_HUB_TOKEN"] = settings.HF_TOKEN
 
     max_sec = float(os.environ.get("SPIKE_MAX_SEC", "120"))
-    engines = os.environ.get("SPIKE_ENGINES", "whisper,gigaam,parakeet").split(",")
+    engines = os.environ.get("SPIKE_ENGINES", "whisper,parakeet").split(",")
     engines = [e.strip().lower() for e in engines if e.strip()]
 
     device, dtype = infer_device(settings.DEVICE)
@@ -225,12 +181,6 @@ def main() -> None:
     if "whisper" in engines:
         results.append(
             _run_whisper(wav, models_dir, device, dtype, settings.WHISPER_MODEL)
-        )
-    if "gigaam" in engines:
-        results.append(
-            _run_gigaam(
-                wav, models_dir, device, settings.GIGAAM_MODEL, settings.HF_TOKEN
-            )
         )
     if "parakeet" in engines:
         results.append(

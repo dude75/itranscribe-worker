@@ -39,7 +39,7 @@ def test_header_once_and_append(tmp_path: Path, capsys, monkeypatch: pytest.Monk
     second = MetricEvent(
         timestamp="2026-08-20T10:01:00",
         task_id="t2",
-        asr_model="gigaam",
+        asr_model="parakeet",
         diarization_model="pyannote",
         status="error",
     )

@@ -16,7 +16,7 @@ class Word:
 
 
 def words_from_asr_segments(segments: Iterable[object]) -> list[Word]:
-    """Плоский список слов Whisper/GigaAM с индексом исходного сегмента."""
+    """Плоский список слов ASR-сегментов с индексом исходного сегмента."""
     out: list[Word] = []
     for segment_id, segment in enumerate(segments):
         words = getattr(segment, "words", None)

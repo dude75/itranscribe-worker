@@ -253,7 +253,7 @@ def main() -> None:
     print("[ ] модель загрузилась на вашем nemo_toolkit")
     print("[ ] русский текст кириллицей, не транслит")
     print("[ ] word timestamps не пустые")
-    print("[ ] скорость приемлема vs GigaAM/Whisper")
+    print("[ ] скорость приемлема vs Whisper")
     print("[ ] длинный файл (>24 min) — отдельный spike, нужен chunking")
     print("\nGo/no-go: если load OK + RU кириллица + timestamps — имеет смысл интеграция.")
 

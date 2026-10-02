@@ -8,7 +8,6 @@ from pydantic import BaseModel, BeforeValidator, Field
 
 class AsrModel(str, Enum):
     whisper = "whisper"
-    gigaam = "gigaam"
     parakeet = "parakeet"
 
 

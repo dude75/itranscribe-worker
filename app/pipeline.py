@@ -57,8 +57,6 @@ def checkpoints_for(
 ) -> tuple[str, str | None]:
     if asr is AsrModel.whisper:
         asr_ckpt = settings.WHISPER_MODEL
-    elif asr is AsrModel.gigaam:
-        asr_ckpt = settings.GIGAAM_MODEL
     else:
         asr_ckpt = settings.PARAKEET_MODEL
     if diar is None:

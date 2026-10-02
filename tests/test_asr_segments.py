@@ -28,7 +28,7 @@ def test_whisper_style_words_keep_segment_id() -> None:
     assert words[2].end == 1.2
 
 
-def test_gigaam_style_words_keep_segment_id() -> None:
+def test_asr_segment_words_use_text_field() -> None:
     segments = [
         SimpleNamespace(
             words=[

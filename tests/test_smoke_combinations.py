@@ -20,8 +20,6 @@ pytest.importorskip("torch")
 COMBOS = [
     (AsrModel.whisper, DiarizationModel.nemo),
     (AsrModel.whisper, DiarizationModel.pyannote),
-    (AsrModel.gigaam, DiarizationModel.nemo),
-    (AsrModel.gigaam, DiarizationModel.pyannote),
     (AsrModel.parakeet, DiarizationModel.nemo),
     (AsrModel.parakeet, DiarizationModel.pyannote),
 ]

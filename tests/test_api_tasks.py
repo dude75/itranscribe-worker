@@ -66,7 +66,6 @@ def test_health_without_token(client: TestClient) -> None:
     assert body["device"] in {"cpu", "cuda"}
     assert set(body["engines"]) == {
         "whisper",
-        "gigaam",
         "parakeet",
         "nemo",
         "pyannote",
@@ -393,7 +392,7 @@ def test_two_workers_run_two_tasks_in_parallel(
         runner = TaskRunner(settings)
         await runner.start()
         first = await runner.submit(wav, AsrModel.whisper, None)
-        second = await runner.submit(wav, AsrModel.gigaam, None)
+        second = await runner.submit(wav, AsrModel.parakeet, None)
         assert await asyncio.to_thread(entered.acquire, True, 5)
         assert await asyncio.to_thread(entered.acquire, True, 5)
         running = {

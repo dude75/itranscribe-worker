@@ -9,10 +9,7 @@ faster-whisper==1.2.1
 # faster-whisper 1.2.x вызывает av.open(..., metadata_errors=...); в av 19.0.0 аргумент убрали.
 av>=14.2.0,<19
 pyannote.audio==4.0.7
-# Без [longform]: extra тянет transformers==5.* (конфликт с tone). Longform — pyannote VAD + numba/pyarrow (аудио через soundfile).
-gigaam @ https://github.com/salute-developers/GigaAM/archive/7447938d791c4f3e643386ee22c33777004293a5.tar.gz
 numba>=0.62
-pyarrow>=23
 nemo_toolkit[asr]==3.0.0
 transformers==4.57.3
 librosa==0.11.0

@@ -1,5 +1,7 @@
 # Производительность itranscribe-worker
 
+> **Примечание:** отчёт снят до **0.2.0**, когда ASR включал `gigaam`. С **0.2.0** в продукте только `whisper` и `parakeet`; строки с `gigaam` ниже — архивные бенчмарки.
+
 Для просмотра с графиками откройте [`performance.html`](performance.html) локально (GitHub HTML не рендерит). Ниже тот же отчёт таблицами.
 
 2 сентября 2026, один файл ~84 мин (`audio_duration_sec` = 5013), 10 последовательных прогонов на комбинацию, `WORKERS=1`. Три GPU: GeForce RTX 5060 Ti, GeForce RTX 4080 SUPER, RTX PRO 6000 Blackwell Server Edition. Исходники — `performance_log_*.csv` в этом каталоге.

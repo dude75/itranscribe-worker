@@ -11,7 +11,6 @@ from pathlib import Path
 
 from app.audio import infer_device
 from app.config import Settings
-from app.engines.asr.gigaam import GigaAMASR
 from app.engines.asr.parakeet import ParakeetASR
 from app.engines.asr.whisper import FasterWhisperASR
 from app.engines.base import ASREngine, DiarizationEngine
@@ -32,7 +31,6 @@ class EngineCache:
         self.preloaded = False
         self.status: dict[str, EngineStatus] = {
             "whisper": EngineStatus.unavailable,
-            "gigaam": EngineStatus.unavailable,
             "parakeet": EngineStatus.unavailable,
             "nemo": EngineStatus.unavailable,
             "pyannote": EngineStatus.unavailable,
@@ -50,7 +48,6 @@ class EngineCache:
         self.preloaded = False
         self.status = {
             "whisper": EngineStatus.loaded,
-            "gigaam": EngineStatus.loaded,
             "parakeet": EngineStatus.loaded,
             "nemo": EngineStatus.loaded,
             "pyannote": EngineStatus.loaded,
@@ -131,18 +128,6 @@ class EngineCache:
             AsrModel.whisper,
             lambda: FasterWhisperASR(
                 settings.WHISPER_MODEL, models_dir, device=device, compute_type=dtype
-            ),
-            self.replicas,
-        )
-        self._preload_engine(
-            asr_wanted,
-            self._asr,
-            AsrModel.gigaam,
-            lambda: GigaAMASR(
-                settings.GIGAAM_MODEL,
-                models_dir,
-                device=device,
-                hf_token=settings.HF_TOKEN,
             ),
             self.replicas,
         )
@@ -321,7 +306,7 @@ def get_cache() -> EngineCache:
 
 
 def _prepare_runtime_caches(settings: Settings) -> None:
-    """Numba/librosa и Matplotlib иначе пишут в $HOME и падают, если каталог недоступен."""
+    """Numba (librosa/tone) и Matplotlib иначе пишут в $HOME и падают, если каталог недоступен."""
     numba_dir = Path(settings.DATA_DIR).resolve() / "numba_cache"
     mpl_dir = Path(settings.LOG_DIR).resolve() / "mpl"
     numba_dir.mkdir(parents=True, exist_ok=True)

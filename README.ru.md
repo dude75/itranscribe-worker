@@ -9,9 +9,9 @@
 - На вход: WAV, MP3, M4A, FLAC, OGG, Opus или WebM.
 - На выход: **линейный** список реплик (`speaker`, `start`, `end`, `text`) — в один момент одна фраза, без параллельных реплик в JSON. Без диаризации `speaker` равен `null`.
 - На каждой задаче выбирается комбинация:
-  - ASR: `whisper`, `gigaam` или `parakeet` (обязательно)
+  - ASR: `whisper` или `parakeet` (обязательно)
   - Диаризация: `nemo` или `pyannote`, либо **не указывать / пусто** — только транскрибация, без карты спикеров
-- Конкретные чекпоинты (размер Whisper, имя GigaAM, id Parakeet NeMo, пайплайн PyAnnote, модели NeMo диаризации) задаются в `.env`, не в теле запроса.
+- Конкретные чекпоинты (размер Whisper, id Parakeet NeMo, пайплайн PyAnnote, модели NeMo диаризации) задаются в `.env`, не в теле запроса.
 - Один процесс Python: каждый слот `WORKERS` — полная копия в памяти всех моделей, которые подняли через `PRELOAD_*`. На диске файлы одни.
 
 `POST /transcribe` отвечает **202** и `task_id`. Результат забирается через `/tasks`.
@@ -21,7 +21,7 @@
 - Python **3.12** (не 3.13/3.14 и не системный `python3`, если это другая версия)
 - Виртуальное окружение `.venv`: команды только через `./.venv/bin/python` и `./.venv/bin/pip`
 - **pip 25.3** — ставится в venv перед `requirements*.txt` (как в Docker)
-- **ffmpeg** в `PATH` (все загрузки → моно 16 кГц WAV, GigaAM longform)
+- **ffmpeg** в `PATH` (все загрузки → моно 16 kHz WAV)
 - Аккаунт Hugging Face и **принятые лицензии** PyAnnote 3.1 (`pyannote/speaker-diarization-3.1` и зависимости). В `.env` нужен `HF_TOKEN` (им же качается Sortformer с Hugging Face). Без токена/лицензии PyAnnote недоступен.
 - Диск под `./data` для весов, SQLite, логов и tmp очереди задач (в git не коммитится)
 
@@ -74,7 +74,7 @@ Docker: [Docker Compose](#docker-compose) (образы CPU или NVIDIA GPU).
 | Переменная                | Смысл                                                                                                                                                                                                                                                |
 | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `API_TOKEN`               | Bearer-ключ для всех маршрутов, кроме `/health`. Пустой = никто не пройдёт. Не путать с `HF_TOKEN`. Им же запечатывается `transcript` в SQLite (см. ниже).                                                                                    |
-| `HF_TOKEN`                | Токен Hugging Face: скачать PyAnnote, VAD для GigaAM longform и чекпоинт NeMo Sortformer.                                                                                                                                                            |
+| `HF_TOKEN`                | Токен Hugging Face: PyAnnote, чекпоинты Parakeet/NeMo и tone-модели при необходимости.                                                                                                                                                              |
 | `HOST`                    | Интерфейс (`127.0.0.1` локально; в Docker — `0.0.0.0`).                                                                                                                                                                                              |
 | `PORT`                    | HTTP-порт (по умолчанию `8000`).                                                                                                                                                                                                                     |
 | `DATA_DIR`                | Корень персистентных данных (по умолчанию `./data`): модели, SQLite, логи и tmp очереди `{DATA_DIR}/tmp/<task_id>/`.                                                                                                                                 |
@@ -88,12 +88,11 @@ Docker: [Docker Compose](#docker-compose) (образы CPU или NVIDIA GPU).
 | `PERFORMANCE_LOG_ENABLED` | Строка CSV + JSON `metric_event` в stdout при завершении задачи. По умолчанию `true`. `false` / `0` / `no` — выкл. Не трогает прикладные логи.                                                                                                       |
 | `METRICS_ENABLED`         | Прикладные метрики Prometheus на `GET /metrics`. По умолчанию `true`. `false` / `0` / `no` — только process collectors; endpoint остаётся.                                                                                                           |
 | `WHISPER_MODEL`           | Имя Faster-Whisper (по умолчанию `large-v3-turbo`).                                                                                                                                                                                                  |
-| `GIGAAM_MODEL`            | Имя для `gigaam.load_model` (по умолчанию `multilingual_large_ctc`).                                                                                                                                                                                 |
 | `PARAKEET_MODEL`          | Id чекпоинта NeMo ASR (по умолчанию `nvidia/parakeet-tdt-0.6b-v3`). Мультиязычный, с пунктуацией.                                                                                                                                                   |
 | `PARAKEET_CHUNK_SEC`      | Макс. секунд на один вызов Parakeet `transcribe()` (по умолчанию `1380`, ~23 мин). Более длинное аудио режется ffmpeg, таймкоды склеиваются.                                                                                                         |
 | `PYANNOTE_MODEL`          | Id пайплайна PyAnnote (по умолчанию `pyannote/speaker-diarization-3.1`).                                                                                                                                                                             |
 | `NEMO_MODEL`              | Hugging Face id Sortformer для семейства `nemo` (по умолчанию `nvidia/diar_streaming_sortformer_4spk-v2`, лицензия CC-BY-4.0). Максимум 4 спикера.                                                                                                   |
-| `PRELOAD_ASR`             | Какие ASR поднимать и скачивать при старте: `whisper`, `gigaam`, `parakeet`, `all` (по умолчанию) или подмножество через запятую (`whisper,parakeet`).                                                                                                                                               |
+| `PRELOAD_ASR`             | Какие ASR поднимать и скачивать при старте: `whisper`, `parakeet`, `all` (по умолчанию) или подмножество через запятую (`whisper,parakeet`).                                                                                                                                                       |
 | `PRELOAD_DIARIZATION`     | Какие диаризации поднимать и скачивать при старте: `nemo`, `pyannote`, `all` (по умолчанию) или подмножество через запятую (`nemo,pyannote`).                                                                                                                                                      |
 | `TONE_TEXT_MODEL`         | HF id эмоций по тексту. **Пусто** — слой выключен.                                                                                                                                                                                                                                                 |
 | `TONE_PROSODY`            | **Пусто** — слой выключен. Иначе `preset:minimal\|standard\|extended` или список `energy,f0,tempo,pauses`. Поля попадают в `transcript[].tone.prosody` (отдельных строк в таймлайне не добавляется): **energy** — громкость; **f0** — высота голоса; **tempo** — слова/с; **pauses** — `pause_before_sec` (пауза перед репликой того же `speaker`). |
@@ -166,7 +165,7 @@ curl -s "$HOST/health" | jq '{version, device, engines, workers}'
 {
   "status": "ok",
   "version": "0.1.3",
-  "engines": { "whisper": "loaded", "gigaam": "loaded", "parakeet": "loaded", "nemo": "loaded", "pyannote": "loaded" },
+  "engines": { "whisper": "loaded", "parakeet": "loaded", "nemo": "loaded", "pyannote": "loaded", "tone_text": "disabled", "tone_ser": "disabled" },
   "device": "cuda",
   "workers": {
     "max": 2,
@@ -217,7 +216,7 @@ curl -sS -X POST "$HOST/transcribe" \
   -F "diarization_model=pyannote"
 ```
 
-`asr_model`: `whisper` (по умолчанию), `gigaam` или `parakeet`.  
+`asr_model`: `whisper` (по умолчанию) или `parakeet`.  
 `diarization_model`: `nemo` (Sortformer, максимум 4 спикера) или `pyannote`. Не указывайте поле или передайте пустую строку, чтобы не делать диаризацию (только ASR). Дефолтного семейства нет: нет поля / пусто = без карты спикеров. Для длинных файлов, где важна скорость, в запросе берите `nemo`. `pyannote` — когда важнее его карта спикеров, а не минимальное время.
 
 `tone`: `true` или `false` (по умолчанию `false`). При `true` считаются **непустые** слои в `.env` (`TONE_TEXT_MODEL`, `TONE_PROSODY`, `TONE_SER_MODEL`) **независимо**: недоступный preload (text/ser) **пропускается**, остальные слои и транскрипт не падают; в логах warning. Нет ни одного слоя в `.env` — как `false`, `meta.tone_skipped=true`. Если все настроенные слои недоступны — `success`, `meta.tone_skipped=true`, `meta.tone_layers` пустой или отсутствует. На репликах optional `tone`; при успехе optional `call_summary`, `meta.tone_layers`. Интерпретация полей для людей/LLM: [docs/tone/llm-interpretation.ru.md](docs/tone/llm-interpretation.ru.md).
@@ -355,11 +354,10 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml down
 | HTTP **200**, `status=error`, `error.code = process_killed`     | Процесс умер на `running` больше `TASK_MAX_RESTARTS` раз (kernel OOM-kill / нативный segfault). Воркер остаётся живым. CUDA OOM — это `pipeline_error`. |
 | HTTP **200**, `status=error`, `error.code = ffmpeg_timeout`     | ffmpeg не успел нормализовать загрузку в моно 16 кГц WAV за `FFMPEG_TIMEOUT_SEC`. Процесс конвертера убивается, слот воркера освобождается.        |
 | HTTP **200**, `status=error`, `error.code = task_timeout`       | Задача не уложилась в `TASK_TIMEOUT_SEC` (по умолчанию 4 часа). Следующие этапы не стартуют; слот воркера освобождается, когда текущий этап вернётся. |
-| HTTP **422**                                                    | Неверный `asr_model` / `diarization_model` (`whisper`/`gigaam`/`parakeet`; `nemo`/`pyannote`). Пустой `diarization_model` допустим (без диаризации). |
-| `pip install` / GigaAM: `No matching distribution found for onnxruntime==1.23.*` | Обычно venv не на **Python 3.12** (например 3.14). Пересоздайте: `python3.12 -m venv .venv`, `pip==25.3`, затем `requirements*.txt`. |
-| `gigaam[longform]` vs `transformers==4.57.3` | В репозитории ставится **базовый** `gigaam` + `numba`/`pyarrow` для `transcribe_longform`; не используйте `gigaam[longform]` вручную — extra конфликтует с tone. |
+| HTTP **422**                                                    | Неверный `asr_model` / `diarization_model` (`whisper`/`parakeet`; `nemo`/`pyannote`). Пустой `diarization_model` допустим (без диаризации). |
+| `pip install` падает на ML-зависимостях                         | Обычно venv не на **Python 3.12** (например 3.14). Пересоздайте: `python3.12 -m venv .venv`, `pip==25.3`, затем `requirements*.txt`. |
 | Whisper / `pipeline_error`: `open() got an unexpected keyword argument 'metadata_errors'` | Случайно стоит **PyAV 19** (`av==19`). Нужно **`av>=14.2,<19`** (см. `requirements-ml.txt`): `./.venv/bin/pip install 'av>=14.2.0,<19'`. |
-| UserWarning: `torchcodec is not installed correctly` (macOS) | **torchcodec 0.10** совместим с FFmpeg **4–8**; Homebrew часто ставит **9** (`libavutil.61`). Загрузки у нас уже в **моно 16 kHz WAV** (ffmpeg CLI); PyAnnote/GigaAM VAD читают WAV через **soundfile**, не через torchcodec. Предупреждение на import можно игнорировать. Нужен «чистый» torchcodec — поставьте FFmpeg 8 (`brew install ffmpeg@8`) и добавьте его `lib` в `DYLD_LIBRARY_PATH`. |
+| UserWarning: `torchcodec is not installed correctly` (macOS) | **torchcodec 0.10** совместим с FFmpeg **4–8**; Homebrew часто ставит **9** (`libavutil.61`). Загрузки у нас уже в **моно 16 kHz WAV** (ffmpeg CLI); PyAnnote читает WAV через **soundfile**, не через torchcodec. Предупреждение на import можно игнорировать. Нужен «чистый» torchcodec — поставьте FFmpeg 8 (`brew install ffmpeg@8`) и добавьте его `lib` в `DYLD_LIBRARY_PATH`. |
 | `Permission denied` на `/data/...` (`tasks.db`, `models`, `logs`, `tmp`) | Хостовый `./data` недоступен uid 1001. Выполните `sudo chown -R 1001:1001 ./data` и перезапустите. Не ставьте `chmod 777`. |
 
 

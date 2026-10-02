@@ -36,7 +36,6 @@ if TYPE_CHECKING:
 CONTENT_TYPE = CONTENT_TYPE_LATEST
 ENGINES = (
     "whisper",
-    "gigaam",
     "parakeet",
     "nemo",
     "pyannote",
@@ -44,7 +43,7 @@ ENGINES = (
     "tone_ser",
 )
 ENGINE_STATUSES = ("loaded", "unavailable", "disabled")
-ASR_ENGINES = ("whisper", "gigaam")
+ASR_ENGINES = ("whisper", "parakeet")
 
 STAGE_BUCKETS = (5.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0, 1200.0, 1800.0, 3600.0)
 QUEUE_WAIT_BUCKETS = (0.1, 0.5, 1.0, 2.0, 5.0, 15.0, 30.0, 60.0, 120.0, 300.0)
@@ -364,7 +363,7 @@ class Metrics:
                 "version": read_version(),
                 "device": cache.device,
                 "whisper_checkpoint": settings.WHISPER_MODEL,
-                "gigaam_checkpoint": settings.GIGAAM_MODEL,
+                "parakeet_checkpoint": settings.PARAKEET_MODEL,
                 "nemo_checkpoint": settings.NEMO_MODEL,
                 "pyannote_checkpoint": settings.PYANNOTE_MODEL,
             }

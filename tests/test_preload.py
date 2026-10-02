@@ -25,7 +25,6 @@ def test_preload_sets_writable_numba_and_mpl_caches(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr("app.engines.cache.FasterWhisperASR", _spy("whisper", []))
-    monkeypatch.setattr("app.engines.cache.GigaAMASR", _spy("gigaam", []))
     monkeypatch.setattr("app.engines.cache.ParakeetASR", _spy("parakeet", []))
     monkeypatch.setattr("app.engines.cache.NemoSortformerDiarizer", _spy("nemo", []))
     monkeypatch.setattr("app.engines.cache.PyannoteDiarizer", _spy("pyannote", []))
@@ -63,7 +62,7 @@ def test_preload_defaults_all() -> None:
     assert settings.LOG_MAX_BYTES == 5 * 1024 * 1024
     assert settings.LOG_BACKUP_COUNT == 5
     assert settings.WORKERS == 1
-    assert settings.asr_families_to_preload() == ("whisper", "gigaam", "parakeet")
+    assert settings.asr_families_to_preload() == ("whisper", "parakeet")
     assert settings.diarization_families_to_preload() == ("nemo", "pyannote")
     assert settings.ALLOWED_UPLOAD_SUFFIXES == "all"
     assert settings.allowed_upload_suffixes() == frozenset(SUPPORTED_UPLOAD_SUFFIXES)
@@ -116,7 +115,7 @@ def test_preload_accepts_comma_separated_families() -> None:
         PRELOAD_DIARIZATION="pyannote,nemo",
         _env_file=None,
     )
-    assert settings.PRELOAD_ASR == "whisper,parakeet"
+    assert settings.PRELOAD_ASR == "all"
     assert settings.PRELOAD_DIARIZATION == "all"
     assert settings.asr_families_to_preload() == ("whisper", "parakeet")
     assert settings.diarization_families_to_preload() == ("nemo", "pyannote")
@@ -124,7 +123,7 @@ def test_preload_accepts_comma_separated_families() -> None:
 
 def test_preload_full_explicit_list_normalizes_to_all() -> None:
     settings = Settings(
-        PRELOAD_ASR="parakeet,gigaam,whisper",
+        PRELOAD_ASR="parakeet,whisper",
         PRELOAD_DIARIZATION="nemo,pyannote",
         _env_file=None,
     )
@@ -207,7 +206,6 @@ def test_preload_skips_constructors_and_marks_disabled(
 ) -> None:
     constructed: list[str] = []
     monkeypatch.setattr("app.engines.cache.FasterWhisperASR", _spy("whisper", constructed))
-    monkeypatch.setattr("app.engines.cache.GigaAMASR", _spy("gigaam", constructed))
     monkeypatch.setattr("app.engines.cache.ParakeetASR", _spy("parakeet", constructed))
     monkeypatch.setattr("app.engines.cache.NemoSortformerDiarizer", _spy("nemo", constructed))
     monkeypatch.setattr("app.engines.cache.PyannoteDiarizer", _spy("pyannote", constructed))
@@ -229,12 +227,11 @@ def test_preload_skips_constructors_and_marks_disabled(
     assert constructed == ["whisper", "nemo"]
     assert cache.status["whisper"] is EngineStatus.loaded
     assert cache.status["nemo"] is EngineStatus.loaded
-    assert cache.status["gigaam"] is EngineStatus.disabled
     assert cache.status["parakeet"] is EngineStatus.disabled
     assert cache.status["pyannote"] is EngineStatus.disabled
 
     with pytest.raises(TaskFailed) as asr_exc:
-        cache.resolve_asr(AsrModel.gigaam)
+        cache.resolve_asr(AsrModel.parakeet)
     assert asr_exc.value.code is ErrorCode.engine_unavailable
 
     with pytest.raises(TaskFailed) as diar_exc:
@@ -251,7 +248,6 @@ def test_preload_comma_separated_constructs_listed_families(
 ) -> None:
     constructed: list[str] = []
     monkeypatch.setattr("app.engines.cache.FasterWhisperASR", _spy("whisper", constructed))
-    monkeypatch.setattr("app.engines.cache.GigaAMASR", _spy("gigaam", constructed))
     monkeypatch.setattr("app.engines.cache.ParakeetASR", _spy("parakeet", constructed))
     monkeypatch.setattr("app.engines.cache.NemoSortformerDiarizer", _spy("nemo", constructed))
     monkeypatch.setattr("app.engines.cache.PyannoteDiarizer", _spy("pyannote", constructed))
@@ -272,33 +268,8 @@ def test_preload_comma_separated_constructs_listed_families(
     assert constructed == ["whisper", "parakeet", "nemo"]
     assert cache.status["whisper"] is EngineStatus.loaded
     assert cache.status["parakeet"] is EngineStatus.loaded
-    assert cache.status["gigaam"] is EngineStatus.disabled
     assert cache.status["nemo"] is EngineStatus.loaded
     assert cache.status["pyannote"] is EngineStatus.disabled
-
-
-def test_preload_gigaam_unavailable_without_token(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr("app.engines.cache.NemoSortformerDiarizer", _spy("nemo", []))
-    monkeypatch.setattr(
-        "app.engines.cache.infer_device", lambda *_args, **_kwargs: ("cpu", "float32")
-    )
-
-    settings = Settings(
-        PRELOAD_ASR="gigaam",
-        PRELOAD_DIARIZATION="nemo",
-        MODELS_DIR=str(tmp_path),
-        HF_TOKEN="",
-        _env_file=None,
-    )
-    cache = EngineCache()
-    cache.preload(settings)
-
-    assert cache.status["gigaam"] is EngineStatus.unavailable
-    with pytest.raises(TaskFailed) as exc:
-        cache.resolve_asr(AsrModel.gigaam)
-    assert exc.value.code is ErrorCode.engine_unavailable
 
 
 def test_preload_all_constructs_every_family(
@@ -306,7 +277,6 @@ def test_preload_all_constructs_every_family(
 ) -> None:
     constructed: list[str] = []
     monkeypatch.setattr("app.engines.cache.FasterWhisperASR", _spy("whisper", constructed))
-    monkeypatch.setattr("app.engines.cache.GigaAMASR", _spy("gigaam", constructed))
     monkeypatch.setattr("app.engines.cache.ParakeetASR", _spy("parakeet", constructed))
     monkeypatch.setattr("app.engines.cache.NemoSortformerDiarizer", _spy("nemo", constructed))
     monkeypatch.setattr("app.engines.cache.PyannoteDiarizer", _spy("pyannote", constructed))
@@ -323,10 +293,9 @@ def test_preload_all_constructs_every_family(
     cache = EngineCache()
     cache.preload(settings)
 
-    assert constructed == ["whisper", "gigaam", "parakeet", "nemo", "pyannote"]
+    assert constructed == ["whisper", "parakeet", "nemo", "pyannote"]
     assert cache.status == {
         "whisper": EngineStatus.loaded,
-        "gigaam": EngineStatus.loaded,
         "parakeet": EngineStatus.loaded,
         "nemo": EngineStatus.loaded,
         "pyannote": EngineStatus.loaded,
@@ -340,7 +309,6 @@ def test_preload_workers_builds_independent_replicas(
 ) -> None:
     constructed: list[str] = []
     monkeypatch.setattr("app.engines.cache.FasterWhisperASR", _spy("whisper", constructed))
-    monkeypatch.setattr("app.engines.cache.GigaAMASR", _spy("gigaam", constructed))
     monkeypatch.setattr("app.engines.cache.ParakeetASR", _spy("parakeet", constructed))
     monkeypatch.setattr("app.engines.cache.NemoSortformerDiarizer", _spy("nemo", constructed))
     monkeypatch.setattr("app.engines.cache.PyannoteDiarizer", _spy("pyannote", constructed))
@@ -393,14 +361,13 @@ def test_preload_replica_zero_downloads_then_rest_use_cache(
     monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
     monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
     events: list[tuple[str, bool]] = []
-    downloaded = {"whisper": False, "nemo": False, "gigaam": False, "parakeet": False, "pyannote": False}
+    downloaded = {"whisper": False, "nemo": False, "parakeet": False, "pyannote": False}
     monkeypatch.setattr(
         "app.engines.cache.FasterWhisperASR", _cache_aware("whisper", downloaded, events)
     )
     monkeypatch.setattr(
         "app.engines.cache.NemoSortformerDiarizer", _cache_aware("nemo", downloaded, events)
     )
-    monkeypatch.setattr("app.engines.cache.GigaAMASR", _spy("gigaam", []))
     monkeypatch.setattr("app.engines.cache.ParakeetASR", _spy("parakeet", []))
     monkeypatch.setattr("app.engines.cache.PyannoteDiarizer", _spy("pyannote", []))
     monkeypatch.setattr(
@@ -428,7 +395,6 @@ def test_preload_replica_zero_downloads_then_rest_use_cache(
     assert downloaded == {
         "whisper": True,
         "nemo": True,
-        "gigaam": False,
         "parakeet": False,
         "pyannote": False,
     }
@@ -441,14 +407,13 @@ def test_preload_uses_cache_for_every_replica_when_already_downloaded(
     monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
     monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
     events: list[tuple[str, bool]] = []
-    downloaded = {"whisper": True, "nemo": True, "gigaam": False, "parakeet": False, "pyannote": False}
+    downloaded = {"whisper": True, "nemo": True, "parakeet": False, "pyannote": False}
     monkeypatch.setattr(
         "app.engines.cache.FasterWhisperASR", _cache_aware("whisper", downloaded, events)
     )
     monkeypatch.setattr(
         "app.engines.cache.NemoSortformerDiarizer", _cache_aware("nemo", downloaded, events)
     )
-    monkeypatch.setattr("app.engines.cache.GigaAMASR", _spy("gigaam", []))
     monkeypatch.setattr("app.engines.cache.ParakeetASR", _spy("parakeet", []))
     monkeypatch.setattr("app.engines.cache.PyannoteDiarizer", _spy("pyannote", []))
     monkeypatch.setattr(
@@ -482,7 +447,6 @@ def test_preload_failure_logs_exception_for_every_family(
             raise RuntimeError("weights missing")
 
     monkeypatch.setattr("app.engines.cache.FasterWhisperASR", Boom)
-    monkeypatch.setattr("app.engines.cache.GigaAMASR", Boom)
     monkeypatch.setattr("app.engines.cache.ParakeetASR", Boom)
     monkeypatch.setattr("app.engines.cache.NemoSortformerDiarizer", Boom)
     monkeypatch.setattr("app.engines.cache.PyannoteDiarizer", Boom)
@@ -502,6 +466,6 @@ def test_preload_failure_logs_exception_for_every_family(
         EngineCache().preload(settings)
 
     messages = [record.getMessage() for record in caplog.records]
-    for name in ("whisper", "gigaam", "parakeet", "nemo", "pyannote"):
+    for name in ("whisper", "parakeet", "nemo", "pyannote"):
         expected = f"{name} preload failed: RuntimeError: weights missing"
         assert any(expected == message for message in messages), messages

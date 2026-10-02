@@ -6,7 +6,7 @@ from typing import Literal
 from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-ASR_FAMILIES = ("whisper", "gigaam", "parakeet")
+ASR_FAMILIES = ("whisper", "parakeet")
 DIARIZATION_FAMILIES = ("nemo", "pyannote")
 TONE_PRELOAD_FAMILIES = ("text", "ser")
 PROSODY_PRESETS: dict[str, tuple[str, ...]] = {
@@ -108,7 +108,6 @@ class Settings(BaseSettings):
     METRICS_ENABLED: bool = True
 
     WHISPER_MODEL: str = "large-v3-turbo"
-    GIGAAM_MODEL: str = "multilingual_large_ctc"
     PARAKEET_MODEL: str = "nvidia/parakeet-tdt-0.6b-v3"
     PARAKEET_CHUNK_SEC: float = 1380.0
     PYANNOTE_MODEL: str = "pyannote/speaker-diarization-3.1"
