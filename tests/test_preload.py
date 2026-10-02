@@ -8,7 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.config import SUPPORTED_UPLOAD_SUFFIXES, Settings
-from app.engines.cache import EngineCache
+from app.engines.cache import EngineCache, PreloadError
 from app.pipeline import TaskFailed
 from app.schemas import AsrModel, DiarizationModel, EngineStatus, ErrorCode
 
@@ -48,6 +48,7 @@ def test_preload_sets_writable_numba_and_mpl_caches(
     assert os.environ["MPLCONFIGDIR"] == str((tmp_path / "logs" / "mpl").resolve())
     assert Path(os.environ["NUMBA_CACHE_DIR"]).is_dir()
     assert Path(os.environ["MPLCONFIGDIR"]).is_dir()
+    assert os.environ["HF_HUB_CACHE"] == str((tmp_path / "models").resolve())
 
 
 def test_preload_defaults_all() -> None:
@@ -340,6 +341,11 @@ def test_preload_workers_builds_independent_replicas(
     assert exc.value.code is ErrorCode.engine_unavailable
 
 
+def _seed_hf_hub_cache(models_dir: Path, model_id: str) -> None:
+    folder = models_dir / f"models--{model_id.replace('/', '--')}" / "snapshots" / "seed"
+    folder.mkdir(parents=True)
+
+
 def _cache_aware(name: str, downloaded: dict[str, bool], events: list[tuple[str, bool]]):
     class Engine:
         def __init__(self, *args, **kwargs) -> None:
@@ -359,7 +365,6 @@ def test_preload_replica_zero_downloads_then_rest_use_cache(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
-    monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
     events: list[tuple[str, bool]] = []
     downloaded = {"whisper": False, "nemo": False, "parakeet": False, "pyannote": False}
     monkeypatch.setattr(
@@ -385,10 +390,8 @@ def test_preload_replica_zero_downloads_then_rest_use_cache(
     EngineCache().preload(settings)
 
     assert events == [
-        ("whisper", True),
         ("whisper", False),
         ("whisper", True),
-        ("nemo", True),
         ("nemo", False),
         ("nemo", True),
     ]
@@ -405,7 +408,6 @@ def test_preload_uses_cache_for_every_replica_when_already_downloaded(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
-    monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
     events: list[tuple[str, bool]] = []
     downloaded = {"whisper": True, "nemo": True, "parakeet": False, "pyannote": False}
     monkeypatch.setattr(
@@ -428,6 +430,8 @@ def test_preload_uses_cache_for_every_replica_when_already_downloaded(
         HF_TOKEN="token",
         _env_file=None,
     )
+    _seed_hf_hub_cache(tmp_path, settings.WHISPER_MODEL)
+    _seed_hf_hub_cache(tmp_path, settings.NEMO_MODEL)
     EngineCache().preload(settings)
 
     assert events == [
@@ -437,6 +441,37 @@ def test_preload_uses_cache_for_every_replica_when_already_downloaded(
         ("nemo", True),
     ]
     assert os.environ.get("HF_HUB_OFFLINE") != "1"
+
+
+def test_preload_aborts_when_required_family_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("app.engines.cache.FasterWhisperASR", _spy("whisper", []))
+    monkeypatch.setattr("app.engines.cache.ParakeetASR", _spy("parakeet", []))
+    monkeypatch.setattr("app.engines.cache.NemoSortformerDiarizer", _spy("nemo", []))
+    monkeypatch.setattr("app.engines.cache.PyannoteDiarizer", _spy("pyannote", []))
+    monkeypatch.setattr(
+        "app.engines.cache.infer_device", lambda *_args, **_kwargs: ("cpu", "float32")
+    )
+
+    class Boom:
+        def __init__(self, *args, **kwargs) -> None:
+            raise RuntimeError("nemo missing")
+
+    monkeypatch.setattr("app.engines.cache.NemoSortformerDiarizer", Boom)
+
+    settings = Settings(
+        PRELOAD_ASR="whisper",
+        PRELOAD_DIARIZATION="nemo",
+        MODELS_DIR=str(tmp_path),
+        _env_file=None,
+    )
+    _seed_hf_hub_cache(tmp_path, settings.WHISPER_MODEL)
+    cache = EngineCache()
+    with pytest.raises(PreloadError) as exc_info:
+        cache.preload(settings)
+    assert exc_info.value.engines == ("nemo",)
+    assert cache.preloaded is False
 
 
 def test_preload_failure_logs_exception_for_every_family(
@@ -463,9 +498,11 @@ def test_preload_failure_logs_exception_for_every_family(
         _env_file=None,
     )
     with caplog.at_level(logging.WARNING, logger="app.engines.cache"):
-        EngineCache().preload(settings)
+        with pytest.raises(PreloadError) as exc_info:
+            EngineCache().preload(settings)
 
+    assert set(exc_info.value.engines) == {"whisper", "parakeet", "nemo", "pyannote"}
     messages = [record.getMessage() for record in caplog.records]
     for name in ("whisper", "parakeet", "nemo", "pyannote"):
-        expected = f"{name} preload failed: RuntimeError: weights missing"
-        assert any(expected == message for message in messages), messages
+        expected = f"preload {name} failed after"
+        assert any(message.startswith(expected) for message in messages), messages

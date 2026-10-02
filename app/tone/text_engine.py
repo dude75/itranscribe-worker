@@ -8,6 +8,7 @@ from typing import Protocol
 import torch
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
+from app.engines.hf_offline import configure_models_dir
 from app.tone.emotions import normalize_emotion_scores, valence_from_emotions
 
 log = logging.getLogger(__name__)
@@ -18,11 +19,14 @@ class TextToneEngine(Protocol):
 
 
 class TransformersTextTone:
-    def __init__(self, model_id: str, device: str) -> None:
+    def __init__(self, model_id: str, device: str, models_dir: str) -> None:
         self._model_id = model_id
         self._device = device
-        self._tokenizer = AutoTokenizer.from_pretrained(model_id)
-        self._model = AutoModelForSequenceClassification.from_pretrained(model_id)
+        cache_dir = configure_models_dir(models_dir)
+        self._tokenizer = AutoTokenizer.from_pretrained(model_id, cache_dir=cache_dir)
+        self._model = AutoModelForSequenceClassification.from_pretrained(
+            model_id, cache_dir=cache_dir
+        )
         self._model.to(device)
         self._model.eval()
         config = self._model.config

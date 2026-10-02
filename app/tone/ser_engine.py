@@ -9,6 +9,7 @@ import numpy as np
 import torch
 from transformers import AutoFeatureExtractor, AutoModelForAudioClassification
 
+from app.engines.hf_offline import configure_models_dir
 from app.tone.audio_io import load_segment
 from app.tone.emotions import normalize_emotion_label
 
@@ -20,11 +21,14 @@ class SerToneEngine(Protocol):
 
 
 class TransformersSerTone:
-    def __init__(self, model_id: str, device: str) -> None:
+    def __init__(self, model_id: str, device: str, models_dir: str) -> None:
         self._model_id = model_id
         self._device = device
-        self._extractor = AutoFeatureExtractor.from_pretrained(model_id)
-        self._model = AutoModelForAudioClassification.from_pretrained(model_id)
+        cache_dir = configure_models_dir(models_dir)
+        self._extractor = AutoFeatureExtractor.from_pretrained(model_id, cache_dir=cache_dir)
+        self._model = AutoModelForAudioClassification.from_pretrained(
+            model_id, cache_dir=cache_dir
+        )
         self._model.to(device)
         self._model.eval()
         config = self._model.config

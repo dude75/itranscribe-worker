@@ -166,7 +166,7 @@ def main() -> None:
     _load_dotenv()
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     os.environ["HF_HOME"] = str(MODELS_DIR)
-    os.environ["HF_HUB_CACHE"] = str(MODELS_DIR / "hub")
+    os.environ["HF_HUB_CACHE"] = str(MODELS_DIR)
     os.environ["NEMO_CACHE_DIR"] = str(MODELS_DIR)
     if token := os.environ.get("HF_TOKEN"):
         os.environ["HUGGING_FACE_HUB_TOKEN"] = token

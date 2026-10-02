@@ -56,7 +56,7 @@ PYTHONPATH=. ./.venv/bin/python -m pytest
 
 Optional: `pytest -m "not ml"` skips integration tests that need a full GPU/ML stack; default CI/local dev uses all deps from `requirements-ml.txt`.
 
-First start **preloads** the families chosen by `PRELOAD_ASR` and `PRELOAD_DIARIZATION` (default `all` = all ASR and diarization families). For each family the first replica uses `MODELS_DIR` if the weights are already there, otherwise it downloads from Hugging Face; the remaining `WORKERS` replicas of that family load only from that cache (no Hub etag). Weights for skipped families are not downloaded. A failed engine is `unavailable`; a skipped one is `disabled`. The process stays up. The first real task should not download weights again if they already sit in `./data/models`.
+First start **preloads** the families chosen by `PRELOAD_ASR` and `PRELOAD_DIARIZATION` (default `all` = all ASR and diarization families). For each family the first replica uses `MODELS_DIR` if the weights are already there, otherwise it downloads from Hugging Face; the remaining `WORKERS` replicas of that family load only from that cache (no Hub etag). Weights for skipped families are not downloaded. If a **requested** family fails to load, the process **does not start** (`PreloadError` in logs). A family left out of `PRELOAD_*` is `disabled` and does not affect startup. The first real task should not download weights again if weights already sit in `./data/models`.
 
 Check:
 

@@ -18,6 +18,17 @@ def pytest_configure(config: pytest.Config) -> None:
             "-r requirements-ml.txt",
             returncode=1,
         )
+    import os
+    import tempfile
+    from pathlib import Path
+
+    from app.config import get_settings
+    from app.engines.hf_offline import configure_models_dir
+
+    models = Path(tempfile.gettempdir()) / "itranscribe_pytest_models"
+    os.environ.setdefault("MODELS_DIR", str(models))
+    get_settings.cache_clear()
+    configure_models_dir(get_settings().MODELS_DIR)
 
 
 @pytest.fixture(scope="session", autouse=True)

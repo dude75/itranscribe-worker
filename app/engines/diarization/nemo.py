@@ -8,7 +8,7 @@ from typing import Any
 
 from app.audio import infer_device
 from app.engines.base import DiarizationSegment
-from app.engines.hf_offline import call_with_local_files_only
+from app.engines.hf_offline import call_with_local_files_only, configure_models_dir
 
 # Streaming Sortformer, высокая латентность ≈ офлайн-батч (карточка модели, окно ~30 с).
 _STREAMING_OFFLINE = {
@@ -110,11 +110,8 @@ class NemoSortformerDiarizer:
         sortformer_cls = _import_sortformer()
         if device is None:
             device, _dtype = infer_device()
+        configure_models_dir(models_dir)
         models_path = Path(models_dir).resolve()
-        models_path.mkdir(parents=True, exist_ok=True)
-        os.environ["NEMO_CACHE_DIR"] = str(models_path)
-        os.environ["HF_HOME"] = str(models_path)
-        os.environ["HF_HUB_CACHE"] = str(models_path / "hub")
         if hf_token:
             os.environ["HF_TOKEN"] = hf_token
             os.environ["HUGGING_FACE_HUB_TOKEN"] = hf_token

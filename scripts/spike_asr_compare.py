@@ -151,7 +151,7 @@ def main() -> None:
     settings = get_settings()
     models_dir = str(Path(settings.MODELS_DIR).resolve())
     os.environ["HF_HOME"] = models_dir
-    os.environ["HF_HUB_CACHE"] = str(Path(models_dir) / "hub")
+    os.environ["HF_HUB_CACHE"] = models_dir
     os.environ["NEMO_CACHE_DIR"] = models_dir
     if settings.HF_TOKEN:
         os.environ["HF_TOKEN"] = settings.HF_TOKEN

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from app.audio import audio_duration_sec, infer_device
 from app.engines.base import Word, words_from_parakeet_timestamps
-from app.engines.hf_offline import call_with_local_files_only
+from app.engines.hf_offline import call_with_local_files_only, configure_models_dir
 
 # NeMo Parakeet ~24 min на один вызов transcribe(); берём запас ниже 1440 с.
 DEFAULT_CHUNK_SEC = 1380.0
@@ -99,11 +99,8 @@ class ParakeetASR:
 
         if device is None:
             device, _dtype = infer_device()
+        configure_models_dir(models_dir)
         models_path = Path(models_dir).resolve()
-        models_path.mkdir(parents=True, exist_ok=True)
-        os.environ["NEMO_CACHE_DIR"] = str(models_path)
-        os.environ["HF_HOME"] = str(models_path)
-        os.environ["HF_HUB_CACHE"] = str(models_path / "hub")
         if hf_token:
             os.environ["HF_TOKEN"] = hf_token
             os.environ["HUGGING_FACE_HUB_TOKEN"] = hf_token

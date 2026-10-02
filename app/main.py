@@ -19,7 +19,11 @@ from fastapi.responses import JSONResponse, Response
 from app.audio import PayloadTooLarge, write_upload_limited
 from app.auth import api_token_is_valid, require_api_token
 from app.config import get_settings
-from app.engines.cache import get_cache
+from app.engines.hf_offline import configure_models_dir
+
+configure_models_dir(get_settings().MODELS_DIR)
+
+from app.engines.cache import PreloadError, get_cache
 from app.logging_setup import setup_logging
 from app.prometheus_metrics import (
     CONTENT_TYPE,
@@ -54,7 +58,9 @@ from app.version import read_version
 async def lifespan(app: FastAPI):
     settings = get_settings()
     setup_logging(settings)
-    logging.getLogger("app").info("service start")
+    log = logging.getLogger("app")
+    log.info("service start")
+    log.info("startup: engine preload (HTTP not ready until this finishes)")
     metrics = create_metrics(settings)
     set_active(metrics)
     app.state.metrics = metrics
@@ -71,13 +77,19 @@ async def lifespan(app: FastAPI):
         pipeline.resolve_tone_text = lambda _slot=0: StubTextTone()
         pipeline.resolve_tone_ser = lambda _slot=0: StubSerTone()
     else:
-        cache.preload(settings)
+        try:
+            cache.preload(settings)
+        except PreloadError as exc:
+            log.error("startup aborted: %s", exc)
+            raise
         pipeline.resolve_asr = cache.resolve_asr
         pipeline.resolve_diarization = cache.resolve_diarization
         pipeline.resolve_tone_text = cache.resolve_tone_text
         pipeline.resolve_tone_ser = cache.resolve_tone_ser
     runner = TaskRunner(settings)
+    log.info("startup: task runner worker_slots=%s", settings.WORKERS)
     await runner.start()
+    log.info("startup complete: API ready")
     metrics.bind(settings=settings, cache=cache, runner=runner)
     app.state.runner = runner
     app.state.engines = cache
