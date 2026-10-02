@@ -330,6 +330,8 @@ def test_preload_all_constructs_every_family(
         "parakeet": EngineStatus.loaded,
         "nemo": EngineStatus.loaded,
         "pyannote": EngineStatus.loaded,
+        "tone_text": EngineStatus.disabled,
+        "tone_ser": EngineStatus.disabled,
     }
 
 

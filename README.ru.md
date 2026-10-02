@@ -18,8 +18,9 @@
 
 ## Требования
 
-- Python **3.12**
-- Виртуальное окружение `.venv` (только `./.venv/bin/python` и `./.venv/bin/pip`)
+- Python **3.12** (не 3.13/3.14 и не системный `python3`, если это другая версия)
+- Виртуальное окружение `.venv`: команды только через `./.venv/bin/python` и `./.venv/bin/pip`
+- **pip 25.3** — ставится в venv перед `requirements*.txt` (как в Docker)
 - **ffmpeg** в `PATH` (все загрузки → моно 16 кГц WAV, GigaAM longform)
 - Аккаунт Hugging Face и **принятые лицензии** PyAnnote 3.1 (`pyannote/speaker-diarization-3.1` и зависимости). В `.env` нужен `HF_TOKEN` (им же качается Sortformer с Hugging Face). Без токена/лицензии PyAnnote недоступен.
 - Диск под `./data` для весов, SQLite, логов и tmp очереди задач (в git не коммитится)
@@ -30,10 +31,12 @@
 
 ```bash
 python3.12 -m venv .venv
-./.venv/bin/pip install -U pip
+./.venv/bin/pip install "pip==25.3"
 ./.venv/bin/pip install -r requirements.txt
 ./.venv/bin/pip install -r requirements-ml.txt
 ```
+
+Проверка окружения: `./.venv/bin/python --version` → **3.12.x**, `./.venv/bin/pip --version` → **pip 25.3**.
 
 Создайте `.env` в корне репозитория (таблица ниже). Файл не коммитить. Затем:
 
@@ -92,6 +95,10 @@ Docker: [Docker Compose](#docker-compose) (образы CPU или NVIDIA GPU).
 | `NEMO_MODEL`              | Hugging Face id Sortformer для семейства `nemo` (по умолчанию `nvidia/diar_streaming_sortformer_4spk-v2`, лицензия CC-BY-4.0). Максимум 4 спикера.                                                                                                   |
 | `PRELOAD_ASR`             | Какие ASR поднимать и скачивать при старте: `whisper`, `gigaam`, `parakeet`, `all` (по умолчанию) или подмножество через запятую (`whisper,parakeet`).                                                                                                                                               |
 | `PRELOAD_DIARIZATION`     | Какие диаризации поднимать и скачивать при старте: `nemo`, `pyannote`, `all` (по умолчанию) или подмножество через запятую (`nemo,pyannote`).                                                                                                                                                      |
+| `TONE_TEXT_MODEL`         | HF id эмоций по тексту. **Пусто** — слой выключен.                                                                                                                                                                                                                                                 |
+| `TONE_PROSODY`            | **Пусто** — слой выключен. Иначе `preset:minimal\|standard\|extended` или список `energy,f0,tempo,pauses`. Поля попадают в `transcript[].tone.prosody` (отдельных строк в таймлайне не добавляется): **energy** — громкость; **f0** — высота голоса; **tempo** — слова/с; **pauses** — `pause_before_sec` (пауза перед репликой того же `speaker`). |
+| `TONE_SER_MODEL`          | HF id SER по аудио. **Пусто** — слой выключен.                                                                                                                                                                                                                                                      |
+| `PRELOAD_TONE`            | `none` (default), `text`, `ser`, `all` / `text,ser` — preload нейросетей на слот `WORKERS` (только если задан соответствующий id). Просodия preload не требует.                                                                                                                                     |
 | `DEVICE`                  | Устройство инференса: `auto` (по умолчанию), `cpu` или `cuda`. `auto` берёт CUDA, если `torch.cuda.is_available()`, иначе CPU. `cpu` — никогда GPU. `cuda` — только GPU; нет CUDA — процесс не стартует. В Docker Compose значение задаётся образом. |
 | `WORKERS`                 | Сколько **задач** можно считать сразу в этом процессе. По умолчанию `1`. Это не воркеры uvicorn. Слот — полная копия в памяти всех загруженных моделей (RAM/VRAM × `WORKERS`); на диске файлы одни.                                          |
 | `WORKERS_MAX`             | Синоним `WORKERS` (то же значение). В `GET /health` попадает в `workers.max` для Capacity в [idigest-hub](https://github.com/dude75/idigest-hub).                                                                                                    |
@@ -103,6 +110,27 @@ Docker: [Docker Compose](#docker-compose) (образы CPU или NVIDIA GPU).
 | `TASK_TIMEOUT_SEC`        | Сколько секунд дать всей задаче (ffmpeg + ASR + диаризация + alignment). По умолчанию `14400` (4 часа). По таймауту задача уходит в `error` с кодом `task_timeout`; текущий этап доигрывается, следующие не стартуют. Нативный инференс посреди вызова не прерывается. `0` — без лимита. |
 | `TASK_MAX_RESTARTS`       | Сколько раз задачу, найденную в `running` после смерти процесса, вернуть в `queued`. По умолчанию `1` (одна повторная попытка). Дальше — `error` с кодом `process_killed`. `0` — сразу ошибка при первом restore. CUDA OOM — обычное Python-исключение (`pipeline_error`), в этот счётчик не входит. |
 
+### Рекомендуемые Hugging Face id для tone
+
+Не SLA: перед prod прогоните smoke на своих звонках. A/B — смена id в `.env` и рестарт.
+
+**`TONE_TEXT_MODEL`** (эмоции / sentiment по тексту реплики):
+
+| | **ru** | **en** | **multilingual** |
+| --- | --- | --- | --- |
+| **lite** | `cointegrated/rubert-tiny2-cedr-emotion-detection` | `j-hartmann/emotion-english-distilroberta-base` | `cardiffnlp/twitter-xlm-roberta-base-sentiment` |
+| **heavy** | `cointegrated/rubert-base-cased-sentiment` | `j-hartmann/emotion-english-roberta-large` | `cardiffnlp/twitter-xlm-roberta-large-sentiment-multilingual` |
+
+**`TONE_SER_MODEL`** (эмоция по аудио-слайсу реплики):
+
+| | **ru** | **en** | **multilingual** |
+| --- | --- | --- | --- |
+| **lite** | `superb/wav2vec2-base-superb-er` * | `superb/wav2vec2-base-superb-er` | `iic/emotion2vec_plus_base` * |
+| **heavy** | `ehcalabres/wav2vec2-lg-xlsr-en-speech-emotion-recognition` * | `ehcalabres/wav2vec2-lg-xlsr-en-speech-emotion-recognition` | `iic/emotion2vec_plus_large` * |
+
+\* SER чаще обучен на англ./acted corpus; на русской телефонии качество может просесть — проверяйте. Для ru-only инстанса разумный старт: text **lite** + просodия (`TONE_PROSODY`), SER опционально.
+
+В `.env` подставляется **один** id на переменную; колонка таблицы — ориентир по языку аудитории.
 
 Всё, что должно пережить рестарт, лежит в `./data` (модели, `tasks.db`, логи **и tmp очереди** `{DATA_DIR}/tmp/`). В Docker монтируйте этот каталог. Контейнер Compose пишет в него от uid/gid **1001** (см. [Docker Compose](#docker-compose)).
 
@@ -191,6 +219,10 @@ curl -sS -X POST "$HOST/transcribe" \
 
 `asr_model`: `whisper` (по умолчанию), `gigaam` или `parakeet`.  
 `diarization_model`: `nemo` (Sortformer, максимум 4 спикера) или `pyannote`. Не указывайте поле или передайте пустую строку, чтобы не делать диаризацию (только ASR). Дефолтного семейства нет: нет поля / пусто = без карты спикеров. Для длинных файлов, где важна скорость, в запросе берите `nemo`. `pyannote` — когда важнее его карта спикеров, а не минимальное время.
+
+`tone`: `true` или `false` (по умолчанию `false`). При `true` считаются **непустые** слои в `.env` (`TONE_TEXT_MODEL`, `TONE_PROSODY`, `TONE_SER_MODEL`) **независимо**: недоступный preload (text/ser) **пропускается**, остальные слои и транскрипт не падают; в логах warning. Нет ни одного слоя в `.env` — как `false`, `meta.tone_skipped=true`. Если все настроенные слои недоступны — `success`, `meta.tone_skipped=true`, `meta.tone_layers` пустой или отсутствует. На репликах optional `tone`; при успехе optional `call_summary`, `meta.tone_layers`. Интерпретация полей для людей/LLM: [docs/tone/llm-interpretation.ru.md](docs/tone/llm-interpretation.ru.md).
+
+Пресеты просодии: `minimal` = energy; `standard` = energy + f0; `extended` = + tempo + pauses. Паузы не создают новые интервалы в `transcript` — только метрика на существующей реплике.
 
 ### Опрос одной задачи
 
@@ -324,6 +356,10 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml down
 | HTTP **200**, `status=error`, `error.code = ffmpeg_timeout`     | ffmpeg не успел нормализовать загрузку в моно 16 кГц WAV за `FFMPEG_TIMEOUT_SEC`. Процесс конвертера убивается, слот воркера освобождается.        |
 | HTTP **200**, `status=error`, `error.code = task_timeout`       | Задача не уложилась в `TASK_TIMEOUT_SEC` (по умолчанию 4 часа). Следующие этапы не стартуют; слот воркера освобождается, когда текущий этап вернётся. |
 | HTTP **422**                                                    | Неверный `asr_model` / `diarization_model` (`whisper`/`gigaam`/`parakeet`; `nemo`/`pyannote`). Пустой `diarization_model` допустим (без диаризации). |
+| `pip install` / GigaAM: `No matching distribution found for onnxruntime==1.23.*` | Обычно venv не на **Python 3.12** (например 3.14). Пересоздайте: `python3.12 -m venv .venv`, `pip==25.3`, затем `requirements*.txt`. |
+| `gigaam[longform]` vs `transformers==4.57.3` | В репозитории ставится **базовый** `gigaam` + `numba`/`pyarrow` для `transcribe_longform`; не используйте `gigaam[longform]` вручную — extra конфликтует с tone. |
+| Whisper / `pipeline_error`: `open() got an unexpected keyword argument 'metadata_errors'` | Случайно стоит **PyAV 19** (`av==19`). Нужно **`av>=14.2,<19`** (см. `requirements-ml.txt`): `./.venv/bin/pip install 'av>=14.2.0,<19'`. |
+| UserWarning: `torchcodec is not installed correctly` (macOS) | **torchcodec 0.10** совместим с FFmpeg **4–8**; Homebrew часто ставит **9** (`libavutil.61`). Загрузки у нас уже в **моно 16 kHz WAV** (ffmpeg CLI); PyAnnote/GigaAM VAD читают WAV через **soundfile**, не через torchcodec. Предупреждение на import можно игнорировать. Нужен «чистый» torchcodec — поставьте FFmpeg 8 (`brew install ffmpeg@8`) и добавьте его `lib` в `DYLD_LIBRARY_PATH`. |
 | `Permission denied` на `/data/...` (`tasks.db`, `models`, `logs`, `tmp`) | Хостовый `./data` недоступен uid 1001. Выполните `sudo chown -R 1001:1001 ./data` и перезапустите. Не ставьте `chmod 777`. |
 
 

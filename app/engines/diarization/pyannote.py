@@ -63,8 +63,16 @@ def _is_torchcodec_error(exc: BaseException) -> bool:
 
 def install_soundfile_audio_fallback() -> None:
     """PyAnnote Audio I/O через soundfile, если torchcodec не сходится с ffmpeg на хосте."""
-    import pyannote.audio.core.io as io_mod
-    from pyannote.audio.core.io import Audio
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=".*torchcodec is not installed correctly.*",
+            category=UserWarning,
+        )
+        import pyannote.audio.core.io as io_mod
+        from pyannote.audio.core.io import Audio
 
     if getattr(Audio, "_itranscribe_soundfile", False):
         return

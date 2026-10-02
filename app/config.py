@@ -3,11 +3,17 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ASR_FAMILIES = ("whisper", "gigaam", "parakeet")
 DIARIZATION_FAMILIES = ("nemo", "pyannote")
+TONE_PRELOAD_FAMILIES = ("text", "ser")
+PROSODY_PRESETS: dict[str, tuple[str, ...]] = {
+    "minimal": ("energy",),
+    "standard": ("energy", "f0"),
+    "extended": ("energy", "f0", "tempo", "pauses"),
+}
 SUPPORTED_UPLOAD_SUFFIXES = (".wav", ".mp3", ".m4a", ".flac", ".ogg", ".opus", ".webm")
 UPLOAD_SUFFIX_NAMES = tuple(name.lstrip(".") for name in SUPPORTED_UPLOAD_SUFFIXES)
 
@@ -121,6 +127,11 @@ class Settings(BaseSettings):
     TASK_TIMEOUT_SEC: int = 14400
     TASK_MAX_RESTARTS: int = 1
 
+    TONE_TEXT_MODEL: str = ""
+    TONE_SER_MODEL: str = ""
+    TONE_PROSODY: str = ""
+    PRELOAD_TONE: str = "none"
+
     @field_validator("PRELOAD_ASR", mode="before")
     @classmethod
     def _normalize_preload_asr(cls, value: object) -> object:
@@ -130,6 +141,39 @@ class Settings(BaseSettings):
     @classmethod
     def _normalize_preload_diarization(cls, value: object) -> object:
         return _normalize_family_list(value, DIARIZATION_FAMILIES, field="PRELOAD_DIARIZATION")
+
+    @field_validator("PRELOAD_TONE", mode="before")
+    @classmethod
+    def _normalize_preload_tone(cls, value: object) -> object:
+        if not isinstance(value, str):
+            raise ValueError("PRELOAD_TONE must be a string")
+        tokens: list[str] = []
+        for raw in value.split(","):
+            token = raw.strip().lower().strip("'\"")
+            if token:
+                tokens.append(token)
+        if not tokens or tokens == ["none"]:
+            return "none"
+        unknown = [t for t in tokens if t not in TONE_PRELOAD_FAMILIES and t != "all"]
+        if unknown:
+            raise ValueError(f"PRELOAD_TONE unknown family: {unknown[0]}")
+        if "all" in tokens:
+            if len(tokens) > 1:
+                raise ValueError("PRELOAD_TONE cannot mix all with other families")
+            return "all"
+        selected = tuple(name for name in TONE_PRELOAD_FAMILIES if name in tokens)
+        if selected == TONE_PRELOAD_FAMILIES:
+            return "all"
+        return ",".join(selected)
+
+    @field_validator("TONE_TEXT_MODEL", "TONE_SER_MODEL", mode="before")
+    @classmethod
+    def _strip_tone_model_ids(cls, value: object) -> object:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value.strip()
+        return value
 
     @field_validator("ALLOWED_UPLOAD_SUFFIXES", mode="before")
     @classmethod
@@ -198,8 +242,66 @@ class Settings(BaseSettings):
     def diarization_families_to_preload(self) -> tuple[str, ...]:
         return _families_from_preload(self.PRELOAD_DIARIZATION, DIARIZATION_FAMILIES)
 
+    def tone_families_to_preload(self) -> tuple[str, ...]:
+        if self.PRELOAD_TONE == "none":
+            return ()
+        wanted = set(_families_from_preload(self.PRELOAD_TONE, TONE_PRELOAD_FAMILIES))
+        if "text" not in wanted or not self.tone_text_configured():
+            wanted.discard("text")
+        if "ser" not in wanted or not self.tone_ser_configured():
+            wanted.discard("ser")
+        return tuple(name for name in TONE_PRELOAD_FAMILIES if name in wanted)
+
+    def tone_text_configured(self) -> bool:
+        return bool(self.TONE_TEXT_MODEL)
+
+    def tone_prosody_configured(self) -> bool:
+        return bool(self.TONE_PROSODY.strip())
+
+    def tone_ser_configured(self) -> bool:
+        return bool(self.TONE_SER_MODEL)
+
+    def tone_any_layer_configured(self) -> bool:
+        return (
+            self.tone_text_configured()
+            or self.tone_prosody_configured()
+            or self.tone_ser_configured()
+        )
+
+    def prosody_features(self) -> frozenset[str] | None:
+        raw = self.TONE_PROSODY.strip()
+        if not raw:
+            return None
+        if raw.lower().startswith("preset:"):
+            name = raw.split(":", 1)[1].strip().lower()
+            if name not in PROSODY_PRESETS:
+                raise ValueError(f"TONE_PROSODY unknown preset: {name}")
+            return frozenset(PROSODY_PRESETS[name])
+        features = frozenset(
+            token.strip().lower()
+            for token in raw.split(",")
+            if token.strip()
+        )
+        allowed = frozenset({"energy", "f0", "tempo", "pauses"})
+        unknown = features - allowed
+        if unknown:
+            raise ValueError(f"TONE_PROSODY unknown feature: {next(iter(unknown))}")
+        return features
+
     def allowed_upload_suffixes(self) -> frozenset[str]:
         return _suffixes_from_allowed(self.ALLOWED_UPLOAD_SUFFIXES)
+
+    @model_validator(mode="after")
+    def _validate_tone_prosody(self) -> "Settings":
+        if not self.tone_prosody_configured():
+            return self
+        try:
+            features = self.prosody_features()
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+        if not features:
+            raise ValueError("TONE_PROSODY must not be empty when set")
+        return self
 
 
 @lru_cache

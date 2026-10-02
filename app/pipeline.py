@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import time
 from pathlib import Path
@@ -15,6 +16,7 @@ from app.metrics import MetricEvent, write_metric
 from app.prometheus_metrics import observe_task_finished, queue_wait_sec
 from app.schemas import (
     AsrModel,
+    CallSummary,
     DiarizationModel,
     ErrorCode,
     ErrorDetail,
@@ -22,6 +24,9 @@ from app.schemas import (
     TranscriptLine,
 )
 from app.tasks import TaskRecord, TaskStore
+from app.tone.runner import run_tone_pass
+
+log = logging.getLogger(__name__)
 
 
 class TaskFailed(Exception):
@@ -37,6 +42,14 @@ def resolve_asr(_model: AsrModel, _slot: int = 0) -> ASREngine:
 
 def resolve_diarization(_model: DiarizationModel, _slot: int = 0) -> DiarizationEngine:
     return StubDiarization()
+
+
+def resolve_tone_text(_slot: int = 0) -> object | None:
+    return None
+
+
+def resolve_tone_ser(_slot: int = 0) -> object | None:
+    return None
 
 
 def checkpoints_for(
@@ -105,6 +118,10 @@ def _emit_task_metrics(
     total_time: float | None,
     rtf: float | None,
     error_code: ErrorCode | None = None,
+    tone_requested: bool = False,
+    tone_skipped: bool | None = None,
+    tone_time_sec: float | None = None,
+    tone_ser_time_sec: float | None = None,
 ) -> None:
     write_metric(
         settings.PERFORMANCE_LOG,
@@ -135,6 +152,10 @@ def _emit_task_metrics(
         total_time_sec=total_time,
         rtf=rtf,
         queue_wait=queue_wait_sec(record.timestamp),
+        tone_requested=tone_requested,
+        tone_skipped=tone_skipped,
+        tone_time_sec=tone_time_sec,
+        tone_ser_time_sec=tone_ser_time_sec,
     )
 
 
@@ -150,6 +171,10 @@ def run_pipeline(store: TaskStore, settings: Settings, task_id: str, slot: int =
     asr_time: float | None = None
     diar_time: float | None = None
     align_time: float | None = None
+    tone_time: float | None = None
+    tone_ser_time: float | None = None
+    tone_layers: list[str] | None = None
+    tone_skipped: bool | None = None
     total_time: float | None = None
     rtf: float | None = None
     outcome: str | None = None
@@ -197,12 +222,47 @@ def run_pipeline(store: TaskStore, settings: Settings, task_id: str, slot: int =
             align_time = time.perf_counter() - t0
 
         _raise_if_task_timeout(deadline, settings.TASK_TIMEOUT_SEC)
-        total_time = time.perf_counter() - started
-        rtf = (asr_time + diar_time) / duration
         transcript = [
             TranscriptLine(speaker=u.speaker, start=u.start, end=u.end, text=u.text)
             for u in utterances
         ]
+        call_summary: CallSummary | None = None
+        if record.tone_requested:
+            if not settings.tone_any_layer_configured():
+                tone_skipped = True
+            else:
+                text_engine = None
+                if settings.tone_text_configured():
+                    text_engine = resolve_tone_text(slot)
+                    if text_engine is None:
+                        log.warning(
+                            "tone_text unavailable; continuing with other tone layers"
+                        )
+                ser_engine = None
+                if settings.tone_ser_configured():
+                    ser_engine = resolve_tone_ser(slot)
+                    if ser_engine is None:
+                        log.warning(
+                            "tone_ser unavailable; continuing with other tone layers"
+                        )
+                tone_result = run_tone_pass(
+                    settings,
+                    wav_path=str(wav),
+                    lines=transcript,
+                    text_engine=text_engine,
+                    ser_engine=ser_engine,
+                )
+                transcript = tone_result.lines
+                tone_time = tone_result.tone_time_sec
+                tone_ser_time = tone_result.tone_ser_time_sec
+                tone_layers = tone_result.layers_applied
+                if not tone_layers:
+                    tone_skipped = True
+                if tone_result.call_summary is not None:
+                    call_summary = tone_result.call_summary
+
+        total_time = time.perf_counter() - started
+        rtf = (asr_time + diar_time) / duration
         store.mark_success(
             task_id,
             audio_duration_sec=duration,
@@ -212,6 +272,12 @@ def run_pipeline(store: TaskStore, settings: Settings, task_id: str, slot: int =
             total_time_sec=total_time,
             rtf=rtf,
             transcript=transcript,
+            tone_requested=record.tone_requested,
+            tone_layers=tone_layers,
+            tone_skipped=tone_skipped,
+            tone_time_sec=tone_time,
+            tone_ser_time_sec=tone_ser_time,
+            call_summary=call_summary,
         )
         outcome = "success"
     except Exception as exc:
@@ -254,4 +320,8 @@ def run_pipeline(store: TaskStore, settings: Settings, task_id: str, slot: int =
                 total_time=total_time,
                 rtf=rtf,
                 error_code=None if error is None else error.code,
+                tone_requested=record.tone_requested,
+                tone_skipped=tone_skipped,
+                tone_time_sec=tone_time,
+                tone_ser_time_sec=tone_ser_time,
             )

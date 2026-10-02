@@ -34,7 +34,15 @@ if TYPE_CHECKING:
     from app.queueing import TaskRunner
 
 CONTENT_TYPE = CONTENT_TYPE_LATEST
-ENGINES = ("whisper", "gigaam", "nemo", "pyannote")
+ENGINES = (
+    "whisper",
+    "gigaam",
+    "parakeet",
+    "nemo",
+    "pyannote",
+    "tone_text",
+    "tone_ser",
+)
 ENGINE_STATUSES = ("loaded", "unavailable", "disabled")
 ASR_ENGINES = ("whisper", "gigaam")
 
@@ -323,6 +331,26 @@ class Metrics:
             buckets=HTTP_BUCKETS,
             registry=self.registry,
         )
+        self.tone_pass = Counter(
+            "itranscribe_tone_pass_total",
+            "Tasks with tone=true that finished the tone stage decision",
+            ["asr_model", "diarization_model", "status", "skipped"],
+            registry=self.registry,
+        )
+        self.tone_duration = Histogram(
+            "itranscribe_tone_duration_seconds",
+            "Tone pass wall time (all layers)",
+            ["asr_model", "diarization_model"],
+            buckets=STAGE_BUCKETS,
+            registry=self.registry,
+        )
+        self.tone_ser_duration = Histogram(
+            "itranscribe_tone_ser_duration_seconds",
+            "Tone SER layer wall time",
+            ["asr_model", "diarization_model"],
+            buckets=STAGE_BUCKETS,
+            registry=self.registry,
+        )
 
     def bind(self, *, settings: Settings, cache: EngineCache, runner: TaskRunner) -> None:
         self.runtime.settings = settings
@@ -401,6 +429,14 @@ def observe_http(method: str, path: str, status_code: int, duration_sec: float) 
     metrics.http_duration.labels(method=method, path=path).observe(duration_sec)
 
 
+def _tone_skipped_label(tone_skipped: bool | None) -> str:
+    if tone_skipped is True:
+        return "true"
+    if tone_skipped is False:
+        return "false"
+    return "na"
+
+
 def observe_task_finished(
     *,
     asr_model: str,
@@ -413,6 +449,10 @@ def observe_task_finished(
     total_time_sec: float | None = None,
     rtf: float | None = None,
     queue_wait: float | None = None,
+    tone_requested: bool = False,
+    tone_skipped: bool | None = None,
+    tone_time_sec: float | None = None,
+    tone_ser_time_sec: float | None = None,
 ) -> None:
     metrics = _active
     if metrics is None or not metrics.enabled:
@@ -448,3 +488,24 @@ def observe_task_finished(
         metrics.rtf.labels(asr_model=asr_model, diarization_model=diar).observe(rtf)
     if queue_wait is not None:
         metrics.queue_wait.labels(asr_model=asr_model, diarization_model=diar).observe(queue_wait)
+    if tone_requested:
+        metrics.tone_pass.labels(
+            asr_model=asr_model,
+            diarization_model=diar,
+            status=status,
+            skipped=_tone_skipped_label(tone_skipped),
+        ).inc()
+    if tone_time_sec is not None:
+        metrics.inference_seconds.labels(
+            stage="tone", asr_model=asr_model, diarization_model=diar
+        ).inc(tone_time_sec)
+        metrics.tone_duration.labels(asr_model=asr_model, diarization_model=diar).observe(
+            tone_time_sec
+        )
+    if tone_ser_time_sec is not None:
+        metrics.inference_seconds.labels(
+            stage="tone_ser", asr_model=asr_model, diarization_model=diar
+        ).inc(tone_ser_time_sec)
+        metrics.tone_ser_duration.labels(asr_model=asr_model, diarization_model=diar).observe(
+            tone_ser_time_sec
+        )

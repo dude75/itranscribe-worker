@@ -16,7 +16,7 @@ from app.config import get_settings
 from app.engines.stubs import StubASR
 from app.main import app
 from app.pipeline import checkpoints_for
-from app.prometheus_metrics import Metrics, set_active
+from app.prometheus_metrics import Metrics, observe_task_finished, set_active
 from app.queueing import TaskRunner
 from app.schemas import AsrModel
 from app.tasks import TaskStore
@@ -105,6 +105,58 @@ def test_health_still_public_tasks_still_auth(client: TestClient) -> None:
     assert client.get("/tasks").status_code == 401
 
 
+def test_engine_gauges_include_tone_and_parakeet(client: TestClient) -> None:
+    body = client.get("/metrics", headers=_auth_headers()).text
+    for engine in ("parakeet", "tone_text", "tone_ser"):
+        assert (
+            _sample(body, "itranscribe_engine_loaded", {"engine": engine}) == 1.0
+        ), f"missing loaded gauge for {engine}"
+
+
+def test_observe_task_finished_tone_metrics() -> None:
+    metrics = Metrics(enabled=True)
+    set_active(metrics)
+    try:
+        observe_task_finished(
+            asr_model="whisper",
+            diarization_model=None,
+            status="success",
+            tone_requested=True,
+            tone_skipped=False,
+            tone_time_sec=1.25,
+            tone_ser_time_sec=0.5,
+        )
+        body = generate_latest(metrics.registry).decode()
+        labels = {
+            "asr_model": "whisper",
+            "diarization_model": "none",
+            "status": "success",
+            "skipped": "false",
+        }
+        hist = {"asr_model": "whisper", "diarization_model": "none"}
+        assert _sample(body, "itranscribe_tone_pass_total", labels) == 1.0
+        assert _sample(body, "itranscribe_tone_duration_seconds_count", hist) == 1.0
+        assert _sample(body, "itranscribe_tone_ser_duration_seconds_count", hist) == 1.0
+        assert (
+            _sample(
+                body,
+                "itranscribe_inference_seconds_total",
+                {**hist, "stage": "tone"},
+            )
+            == 1.25
+        )
+        assert (
+            _sample(
+                body,
+                "itranscribe_inference_seconds_total",
+                {**hist, "stage": "tone_ser"},
+            )
+            == 0.5
+        )
+    finally:
+        set_active(None)
+
+
 def test_submitted_and_completed_success(client: TestClient, wav_bytes: tuple[str, bytes]) -> None:
     created = _post_transcribe(client, wav_bytes, asr_model="whisper")
     assert created.status_code == 202
@@ -124,6 +176,30 @@ def test_submitted_and_completed_success(client: TestClient, wav_bytes: tuple[st
         == 1.0
     )
     assert _sample(body, "itranscribe_pipeline_duration_seconds_count", labels) == 1.0
+
+
+def test_tone_task_emits_pass_and_duration(
+    client: TestClient, wav_bytes: tuple[str, bytes], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TONE_TEXT_MODEL", "stub/text")
+    monkeypatch.setenv("TONE_SER_MODEL", "stub/ser")
+    get_settings.cache_clear()
+    created = _post_transcribe(client, wav_bytes, asr_model="whisper", tone="true")
+    assert created.status_code == 202
+    payload = _wait_task(client, created.json()["meta"]["task_id"])
+    assert payload["status"] == "success"
+    body = client.get("/metrics", headers=_auth_headers()).text
+    labels = {
+        "asr_model": "whisper",
+        "diarization_model": "none",
+        "status": "success",
+        "skipped": "false",
+    }
+    hist = {"asr_model": "whisper", "diarization_model": "none"}
+    assert _sample(body, "itranscribe_tone_pass_total", labels) == 1.0
+    assert _sample(body, "itranscribe_tone_duration_seconds_count", hist) == 1.0
+    assert _sample(body, "itranscribe_tone_ser_duration_seconds_count", hist) == 1.0
+    get_settings.cache_clear()
 
 
 def test_queue_full_increments_rejected(client: TestClient, wav_bytes: tuple[str, bytes]) -> None:

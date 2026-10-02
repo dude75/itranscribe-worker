@@ -64,7 +64,15 @@ def test_health_without_token(client: TestClient) -> None:
     assert body["status"] == "ok"
     assert body["version"] == read_version()
     assert body["device"] in {"cpu", "cuda"}
-    assert set(body["engines"]) == {"whisper", "gigaam", "parakeet", "nemo", "pyannote"}
+    assert set(body["engines"]) == {
+        "whisper",
+        "gigaam",
+        "parakeet",
+        "nemo",
+        "pyannote",
+        "tone_text",
+        "tone_ser",
+    }
     assert set(body["engines"].values()) <= {"loaded", "unavailable", "disabled"}
     assert body["workers"] == {"max": 1, "active": 0, "available": 1}
 
@@ -125,6 +133,17 @@ def test_coerce_optional_diarization() -> None:
 
 def test_invalid_diarization_model_422(client: TestClient, wav_bytes: tuple[str, bytes]) -> None:
     response = _post_transcribe(client, wav_bytes, diarization_model="nope")
+    assert response.status_code == 422
+
+
+def test_transcribe_tone_defaults_false(client: TestClient, wav_bytes: tuple[str, bytes]) -> None:
+    created = _post_transcribe(client, wav_bytes, asr_model="whisper")
+    assert created.status_code == 202
+    assert created.json()["meta"]["tone_requested"] is False
+
+
+def test_transcribe_rejects_invalid_tone(client: TestClient, wav_bytes: tuple[str, bytes]) -> None:
+    response = _post_transcribe(client, wav_bytes, tone="full")
     assert response.status_code == 422
 
 

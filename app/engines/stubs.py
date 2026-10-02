@@ -24,3 +24,13 @@ class StubDiarization:
             DiarizationSegment(start=0.0, end=mid, speaker="A"),
             DiarizationSegment(start=mid, end=duration, speaker="B"),
         ]
+
+
+class StubTextTone:
+    def analyze_batch(self, texts: list[str]) -> list[dict[str, float]]:
+        return [{"neutral": 1.0} for _ in texts]
+
+
+class StubSerTone:
+    def analyze_segment(self, _audio: object, _sample_rate: int) -> tuple[str, float]:
+        return "neutral", 1.0

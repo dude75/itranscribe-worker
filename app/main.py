@@ -33,6 +33,7 @@ from app.prometheus_metrics import (
 from app.queueing import QueueFullError, TaskRunner, TaskRunningError
 from app.schemas import (
     AsrModel,
+    CallSummary,
     ErrorCode,
     ErrorDetail,
     HealthResponse,
@@ -42,6 +43,7 @@ from app.schemas import (
     TaskMeta,
     TaskResponse,
     TaskStatus,
+    ToneFormField,
     TranscriptLine,
     error_payload,
 )
@@ -62,12 +64,18 @@ async def lifespan(app: FastAPI):
 
     if os.environ.get("ITRANSCRIBE_STUBS", "").lower() in {"1", "true", "yes"}:
         cache.reset()
+        from app.engines.stubs import StubSerTone, StubTextTone
+
         pipeline.resolve_asr = lambda _model, _slot=0: StubASR()
         pipeline.resolve_diarization = lambda _model, _slot=0: StubDiarization()
+        pipeline.resolve_tone_text = lambda _slot=0: StubTextTone()
+        pipeline.resolve_tone_ser = lambda _slot=0: StubSerTone()
     else:
         cache.preload(settings)
         pipeline.resolve_asr = cache.resolve_asr
         pipeline.resolve_diarization = cache.resolve_diarization
+        pipeline.resolve_tone_text = cache.resolve_tone_text
+        pipeline.resolve_tone_ser = cache.resolve_tone_ser
     runner = TaskRunner(settings)
     await runner.start()
     metrics.bind(settings=settings, cache=cache, runner=runner)
@@ -157,6 +165,9 @@ def _record_to_response(record: TaskRecord) -> TaskResponse:
     if record.transcript is not None:
         transcript = [TranscriptLine.model_validate(item) for item in record.transcript]
     error = ErrorDetail.model_validate(record.error) if record.error is not None else None
+    call_summary = None
+    if record.call_summary is not None:
+        call_summary = CallSummary.model_validate(record.call_summary)
     return TaskResponse(
         status=record.status,
         meta=TaskMeta(
@@ -172,8 +183,14 @@ def _record_to_response(record: TaskRecord) -> TaskResponse:
             alignment_time_sec=record.alignment_time_sec,
             total_time_sec=record.total_time_sec,
             rtf=record.rtf,
+            tone_requested=record.tone_requested,
+            tone_layers=record.tone_layers,
+            tone_skipped=record.tone_skipped,
+            tone_time_sec=record.tone_time_sec,
+            tone_ser_time_sec=record.tone_ser_time_sec,
         ),
         transcript=transcript,
+        call_summary=call_summary,
         error=error,
     )
 
@@ -200,6 +217,7 @@ async def transcribe(
     file: UploadFile,
     asr_model: AsrModel = Form(AsrModel.whisper),
     diarization_model: Annotated[OptionalDiarizationModel, Form()] = None,
+    tone: ToneFormField = Form(default=False),
     _: str = Depends(require_api_token),
     runner: TaskRunner = Depends(get_runner),
 ) -> TaskResponse:
@@ -217,7 +235,9 @@ async def transcribe(
     except PayloadTooLarge as exc:
         raise _http_error(status.HTTP_413_CONTENT_TOO_LARGE, exc.code) from None
     try:
-        record = await runner.submit(scratch, asr_model, diarization_model)
+        record = await runner.submit(
+            scratch, asr_model, diarization_model, tone_requested=tone
+        )
     except QueueFullError as exc:
         observe_queue_rejected()
         raise _http_error(status.HTTP_503_SERVICE_UNAVAILABLE, exc.code) from None

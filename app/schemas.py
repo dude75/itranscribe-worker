@@ -76,11 +76,59 @@ class ErrorDetail(BaseModel):
     message: str | None = None
 
 
+def coerce_tone_bool(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        stripped = value.strip().lower()
+        if not stripped:
+            return False
+        if stripped == "true":
+            return True
+        if stripped == "false":
+            return False
+        raise ValueError("tone must be true or false")
+    raise ValueError("tone must be true or false")
+
+
+ToneFormField = Annotated[bool, BeforeValidator(coerce_tone_bool)]
+
+
+class ProsodyFeatures(BaseModel):
+    energy_mean_db: float | None = None
+    energy_max_db: float | None = None
+    f0_hz_median: float | None = None
+    words_per_sec: float | None = None
+    pause_before_sec: float | None = None
+
+
+class SerResult(BaseModel):
+    emotion: str
+    score: float
+
+
+class UtteranceTone(BaseModel):
+    valence: float | None = None
+    arousal: float | None = None
+    emotions: dict[str, float] = Field(default_factory=dict)
+    prosody: ProsodyFeatures | None = None
+    ser: SerResult | None = None
+
+
+class CallSummary(BaseModel):
+    opening_valence: float | None = None
+    closing_valence: float | None = None
+    de_escalation: bool | None = None
+
+
 class TranscriptLine(BaseModel):
     speaker: str | None = None
     start: float
     end: float
     text: str
+    tone: UtteranceTone | None = None
 
 
 class TaskMeta(BaseModel):
@@ -96,12 +144,18 @@ class TaskMeta(BaseModel):
     alignment_time_sec: float | None = None
     total_time_sec: float | None = None
     rtf: float | None = None
+    tone_requested: bool = False
+    tone_layers: list[str] | None = None
+    tone_skipped: bool | None = None
+    tone_time_sec: float | None = None
+    tone_ser_time_sec: float | None = None
 
 
 class TaskResponse(BaseModel):
     status: TaskStatus
     meta: TaskMeta
     transcript: list[TranscriptLine] | None = None
+    call_summary: CallSummary | None = None
     error: ErrorDetail | None = None
 
 

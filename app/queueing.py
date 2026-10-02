@@ -119,6 +119,7 @@ class TaskRunner:
         src_path: str | Path,
         asr_model: AsrModel,
         diarization_model: DiarizationModel | None,
+        tone_requested: bool = False,
     ) -> TaskRecord:
         async with self._submit_lock:
             if self.store.count_queued() >= self.settings.WORKER_QUEUE_SIZE:
@@ -136,6 +137,7 @@ class TaskRunner:
                 asr_ckpt,
                 diar_ckpt,
                 str(dest),
+                tone_requested=tone_requested,
             )
             await self._queue.put(task_id)
             observe_submitted(

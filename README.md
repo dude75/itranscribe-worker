@@ -18,8 +18,9 @@ On-premise **ASR + optional speaker diarization** HTTP service. Submit an audio 
 
 ## Requirements
 
-- Python **3.12**
-- Virtualenv at `.venv` (use `./.venv/bin/python` and `./.venv/bin/pip` only)
+- Python **3.12** (not 3.13/3.14; do not use system `python3` if it is another version)
+- Virtualenv at `.venv`: use `./.venv/bin/python` and `./.venv/bin/pip` only
+- **pip 25.3** — install into the venv before `requirements*.txt` (same as Docker)
 - **ffmpeg** on `PATH` (all uploads → mono 16 kHz WAV, GigaAM longform)
 - Hugging Face account + **accepted licenses** for PyAnnote 3.1 (`pyannote/speaker-diarization-3.1` and its dependencies). Set `HF_TOKEN` in `.env` (the same token downloads Sortformer from Hugging Face). Without a token/license, PyAnnote is unavailable.
 - Disk under `./data` for model weights, SQLite, logs, and the task queue tmp (not committed)
@@ -30,10 +31,12 @@ On-premise **ASR + optional speaker diarization** HTTP service. Submit an audio 
 
 ```bash
 python3.12 -m venv .venv
-./.venv/bin/pip install -U pip
+./.venv/bin/pip install "pip==25.3"
 ./.venv/bin/pip install -r requirements.txt
 ./.venv/bin/pip install -r requirements-ml.txt
 ```
+
+Sanity check: `./.venv/bin/python --version` → **3.12.x**, `./.venv/bin/pip --version` → **pip 25.3**.
 
 Create a `.env` in the repo root (see table below). Do not commit it. Then:
 
@@ -92,6 +95,10 @@ Copy names into `.env`. **Do not put real tokens in git or in this README.** Cha
 | `NEMO_MODEL`              | Hugging Face id of Sortformer for the `nemo` family (default `nvidia/diar_streaming_sortformer_4spk-v2`, CC-BY-4.0). Maximum 4 speakers.                                                                                                    |
 | `PRELOAD_ASR`             | Which ASR families to load and download at startup: `whisper`, `gigaam`, `parakeet`, `all` (default), or a comma-separated subset (`whisper,parakeet`).                                                                                                                                     |
 | `PRELOAD_DIARIZATION`     | Which diarization families to load and download at startup: `nemo`, `pyannote`, `all` (default), or a comma-separated subset (`nemo,pyannote`).                                                                                                                                         |
+| `TONE_TEXT_MODEL`         | Hugging Face id for text emotions. **Empty** — layer off.                                                                                                                                                                                                                               |
+| `TONE_PROSODY`            | **Empty** — layer off. Else presets or `energy,f0,tempo,pauses`. Values go on `transcript[].tone.prosody` (no extra timeline rows): **energy** loudness; **f0** pitch; **tempo** words/sec; **pauses** → `pause_before_sec` (gap before same `speaker`). |
+| `TONE_SER_MODEL`          | Hugging Face id for SER. **Empty** — layer off.                                                                                                                                                                                                                                           |
+| `PRELOAD_TONE`            | `none` (default), `text`, `ser`, `all` / `text,ser` — preload neural models per `WORKERS` slot when the matching id is set. Prosody needs no preload.                                                                                                                                   |
 | `DEVICE`                  | Inference device: `auto` (default), `cpu`, or `cuda`. `auto` uses CUDA when `torch.cuda.is_available()`, otherwise CPU. `cpu` never uses the GPU. `cuda` requires CUDA or the process fails at startup. Docker Compose sets this per image. |
 | `WORKERS`                 | How many **tasks** may run at once in this process. Default `1`. Not uvicorn workers. Each slot is a full in-memory copy of every loaded model (RAM/VRAM × `WORKERS`); files on disk stay one set.                                          |
 | `WORKERS_MAX`             | Alias for `WORKERS` (same value). Exposed as `workers.max` in `GET /health` for [idigest-hub](https://github.com/dude75/idigest-hub) Capacity UI.                                                                                          |
@@ -103,6 +110,27 @@ Copy names into `.env`. **Do not put real tokens in git or in this README.** Cha
 | `TASK_TIMEOUT_SEC`        | Wall-clock seconds for the whole task (ffmpeg + ASR + diarization + alignment). Default `14400` (4 hours). On timeout the task becomes `error` with `task_timeout`; the current stage is allowed to finish, later stages are skipped. Native inference cannot be aborted mid-call. `0` = no limit. |
 | `TASK_MAX_RESTARTS`       | How many times a task found `running` after a process death may be put back in `queued`. Default `1` (one retry). After that: `error` with `process_killed`. `0` = fail on the first restore. CUDA OOM is a caught Python exception (`pipeline_error`) and does not count. |
 
+### Recommended Hugging Face ids for tone
+
+Not an SLA — smoke on your calls before prod. A/B = change id in `.env` and restart.
+
+**`TONE_TEXT_MODEL`** (emotions / sentiment on utterance text):
+
+| | **ru** | **en** | **multilingual** |
+| --- | --- | --- | --- |
+| **lite** | `cointegrated/rubert-tiny2-cedr-emotion-detection` | `j-hartmann/emotion-english-distilroberta-base` | `cardiffnlp/twitter-xlm-roberta-base-sentiment` |
+| **heavy** | `cointegrated/rubert-base-cased-sentiment` | `j-hartmann/emotion-english-roberta-large` | `cardiffnlp/twitter-xlm-roberta-large-sentiment-multilingual` |
+
+**`TONE_SER_MODEL`** (emotion on utterance audio):
+
+| | **ru** | **en** | **multilingual** |
+| --- | --- | --- | --- |
+| **lite** | `superb/wav2vec2-base-superb-er` * | `superb/wav2vec2-base-superb-er` | `iic/emotion2vec_plus_base` * |
+| **heavy** | `ehcalabres/wav2vec2-lg-xlsr-en-speech-emotion-recognition` * | `ehcalabres/wav2vec2-lg-xlsr-en-speech-emotion-recognition` | `iic/emotion2vec_plus_large` * |
+
+\* SER is often trained on English / acted data; quality on Russian phone audio may drop — validate locally. For ru-only, a practical start is text **lite** + prosody (`TONE_PROSODY`), SER optional.
+
+Each env var takes **one** id; table columns indicate typical audience language.
 
 Everything that must survive a restart lives under `./data` (models, `tasks.db`, logs, **and queue tmp** `{DATA_DIR}/tmp/`). Mount that directory in Docker. The Compose container writes it as uid/gid **1001** (see [Docker Compose](#docker-compose)).
 
@@ -191,6 +219,10 @@ curl -sS -X POST "$HOST/transcribe" \
 
 `asr_model`: `whisper` (default), `gigaam`, or `parakeet`.  
 `diarization_model`: `nemo` (Sortformer, max 4 speakers) or `pyannote`. Omit the field or send it empty to skip diarization (ASR only). There is no default family — missing/empty means no speaker map. For long files where speed matters, send `nemo`. Use `pyannote` when its speaker map matters more than minimum runtime.
+
+`tone`: `true` or `false` (default `false`). When `true`, runs every **non-empty** tone layer from `.env` (`TONE_TEXT_MODEL`, `TONE_PROSODY`, `TONE_SER_MODEL`) **independently**: if text/ser preload is **unavailable**, that layer is **skipped** (warning in logs); other layers and the transcript still succeed. No layers in `.env` behaves like `false` with `meta.tone_skipped=true`. If every configured layer is unavailable — still `success` with `meta.tone_skipped=true` and no `tone_layers` applied. Optional `tone` on each line, optional `call_summary`, `meta.tone_layers` on success. Field semantics for humans/LLMs: [docs/tone/llm-interpretation.md](docs/tone/llm-interpretation.md).
+
+Prosody presets: `minimal` = energy; `standard` = energy + f0; `extended` adds tempo + pauses. Pauses do not add transcript segments — only `pause_before_sec` on an existing line.
 
 ### Poll one task
 
@@ -324,6 +356,10 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml down
 | HTTP **200**, `status=error`, `error.code = ffmpeg_timeout`     | ffmpeg did not finish normalizing the upload to mono 16 kHz WAV within `FFMPEG_TIMEOUT_SEC`. The converter process is killed; the worker slot is freed. |
 | HTTP **200**, `status=error`, `error.code = task_timeout`       | The task did not finish within `TASK_TIMEOUT_SEC` (default 4 hours). Remaining stages are skipped; the worker slot is freed after the current stage returns. |
 | HTTP **422**                                                    | Invalid `asr_model` / `diarization_model` (`whisper`/`gigaam`/`parakeet`; `nemo`/`pyannote`). Empty `diarization_model` is valid (skip diarization). |
+| `pip install` / GigaAM: `No matching distribution found for onnxruntime==1.23.*` | Usually the venv is not **Python 3.12** (e.g. 3.14). Recreate: `python3.12 -m venv .venv`, `pip==25.3`, then `requirements*.txt`. |
+| `gigaam[longform]` vs `transformers==4.57.3` | This repo installs **base** `gigaam` plus `numba`/`pyarrow` for `transcribe_longform`. Do not `pip install gigaam[longform]` yourself — the extra pins `transformers==5.*` and conflicts with tone. |
+| Whisper / `pipeline_error`: `open() got an unexpected keyword argument 'metadata_errors'` | **PyAV 19** (`av==19`) is installed; faster-whisper 1.2.x needs **`av>=14.2,<19`** (see `requirements-ml.txt`): `./.venv/bin/pip install 'av>=14.2.0,<19'`. |
+| UserWarning: `torchcodec is not installed correctly` (macOS) | **torchcodec 0.10** targets FFmpeg **4–8**; Homebrew often ships **9** (`libavutil.61`). Uploads are normalized to **mono 16 kHz WAV** via the ffmpeg CLI; PyAnnote/GigaAM VAD read WAV through **soundfile**, not torchcodec. Safe to ignore on import. For a working torchcodec, install FFmpeg 8 (`brew install ffmpeg@8`) and point `DYLD_LIBRARY_PATH` at its `lib`. |
 | `Permission denied` on `/data/...` (`tasks.db`, `models`, `logs`, `tmp`) | Host `./data` is not writable by uid 1001. Run `sudo chown -R 1001:1001 ./data` and restart. Do not chmod `777`. |
 
 

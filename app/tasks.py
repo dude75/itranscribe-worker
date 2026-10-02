@@ -15,7 +15,14 @@ from typing import Any
 from cryptography.fernet import Fernet
 
 from app.config import get_settings
-from app.schemas import AsrModel, DiarizationModel, ErrorDetail, TaskStatus, TranscriptLine
+from app.schemas import (
+    AsrModel,
+    CallSummary,
+    DiarizationModel,
+    ErrorDetail,
+    TaskStatus,
+    TranscriptLine,
+)
 
 
 @dataclass
@@ -36,6 +43,12 @@ class TaskRecord:
     total_time_sec: float | None = None
     rtf: float | None = None
     transcript: list[dict[str, Any]] | None = None
+    call_summary: dict[str, Any] | None = None
+    tone_requested: bool = False
+    tone_layers: list[str] | None = None
+    tone_skipped: bool | None = None
+    tone_time_sec: float | None = None
+    tone_ser_time_sec: float | None = None
     error: dict[str, Any] | None = None
     upload_path: str | None = None
     attempts: int = 0
@@ -58,6 +71,14 @@ def _decode_transcript(raw: str | None) -> list[dict[str, Any]] | None:
     if not raw:
         return None
     if raw.lstrip().startswith("["):
+        return json.loads(raw)
+    return json.loads(_transcript_fernet().decrypt(raw.encode()))
+
+
+def _decode_summary(raw: str | None) -> dict[str, Any] | None:
+    if not raw:
+        return None
+    if raw.lstrip().startswith("{"):
         return json.loads(raw)
     return json.loads(_transcript_fernet().decrypt(raw.encode()))
 
@@ -107,6 +128,31 @@ class TaskStore:
                 self._conn.execute(
                     "ALTER TABLE tasks ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0"
                 )
+            tone_requested_added = False
+            for col, ddl in (
+                ("tone_mode", "ALTER TABLE tasks ADD COLUMN tone_mode TEXT NOT NULL DEFAULT 'false'"),
+                (
+                    "tone_requested",
+                    "ALTER TABLE tasks ADD COLUMN tone_requested INTEGER NOT NULL DEFAULT 0",
+                ),
+                ("tone_time_sec", "ALTER TABLE tasks ADD COLUMN tone_time_sec REAL"),
+                ("tone_ser_time_sec", "ALTER TABLE tasks ADD COLUMN tone_ser_time_sec REAL"),
+                ("call_summary", "ALTER TABLE tasks ADD COLUMN call_summary TEXT"),
+                ("tone_layers", "ALTER TABLE tasks ADD COLUMN tone_layers TEXT"),
+                ("tone_skipped", "ALTER TABLE tasks ADD COLUMN tone_skipped INTEGER"),
+            ):
+                if col not in columns:
+                    self._conn.execute(ddl)
+                    columns.add(col)
+                    if col == "tone_requested":
+                        tone_requested_added = True
+            if tone_requested_added and "tone_mode" in columns:
+                self._conn.execute(
+                    """
+                    UPDATE tasks SET tone_requested = 1
+                    WHERE LOWER(TRIM(tone_mode)) = 'true'
+                    """
+                )
             self._conn.commit()
 
     def close(self) -> None:
@@ -121,6 +167,7 @@ class TaskStore:
         asr_checkpoint: str,
         diarization_checkpoint: str | None,
         upload_path: str,
+        tone_requested: bool = False,
     ) -> TaskRecord:
         timestamp = _now()
         with self._lock:
@@ -128,8 +175,8 @@ class TaskStore:
                 """
                 INSERT INTO tasks (
                     task_id, status, timestamp, asr_model, diarization_model,
-                    asr_checkpoint, diarization_checkpoint, upload_path
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    asr_checkpoint, diarization_checkpoint, upload_path, tone_requested
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     task_id,
@@ -140,6 +187,7 @@ class TaskStore:
                     asr_checkpoint,
                     diarization_checkpoint,
                     upload_path,
+                    int(tone_requested),
                 ),
             )
             self._conn.commit()
@@ -261,10 +309,21 @@ class TaskStore:
         total_time_sec: float,
         rtf: float,
         transcript: list[TranscriptLine],
+        tone_requested: bool = False,
+        tone_layers: list[str] | None = None,
+        tone_skipped: bool | None = None,
+        tone_time_sec: float | None = None,
+        tone_ser_time_sec: float | None = None,
+        call_summary: CallSummary | None = None,
     ) -> None:
         payload = _encrypt_transcript(
             json.dumps([line.model_dump() for line in transcript], ensure_ascii=False)
         )
+        summary_payload = None
+        if call_summary is not None:
+            summary_payload = _encrypt_transcript(
+                call_summary.model_dump_json(),
+            )
         with self._lock:
             self._conn.execute(
                 """
@@ -272,7 +331,10 @@ class TaskStore:
                     status = ?, finished_at = ?,
                     audio_duration_sec = ?, asr_time_sec = ?,
                     diarization_time_sec = ?, alignment_time_sec = ?,
-                    total_time_sec = ?, rtf = ?, transcript = ?, error = NULL
+                    total_time_sec = ?, rtf = ?, transcript = ?, error = NULL,
+                    tone_requested = ?, tone_layers = ?, tone_skipped = ?,
+                    tone_time_sec = ?, tone_ser_time_sec = ?,
+                    call_summary = ?
                 WHERE task_id = ?
                 """,
                 (
@@ -285,6 +347,14 @@ class TaskStore:
                     total_time_sec,
                     rtf,
                     payload,
+                    int(tone_requested),
+                    json.dumps(tone_layers, ensure_ascii=False)
+                    if tone_layers is not None
+                    else None,
+                    None if tone_skipped is None else int(tone_skipped),
+                    tone_time_sec,
+                    tone_ser_time_sec,
+                    summary_payload,
                     task_id,
                 ),
             )
@@ -368,6 +438,14 @@ class TaskStore:
             return cur.rowcount
 
 
+def _tone_requested_from_row(row: sqlite3.Row) -> bool:
+    if "tone_requested" in row.keys():
+        return bool(row["tone_requested"])
+    if "tone_mode" in row.keys():
+        return str(row["tone_mode"]).strip().lower() == "true"
+    return False
+
+
 def _row_to_record(row: sqlite3.Row) -> TaskRecord:
     transcript = _decode_transcript(row["transcript"])
     error = json.loads(row["error"]) if row["error"] else None
@@ -390,6 +468,22 @@ def _row_to_record(row: sqlite3.Row) -> TaskRecord:
         total_time_sec=row["total_time_sec"],
         rtf=row["rtf"],
         transcript=transcript,
+        call_summary=_decode_summary(row["call_summary"]) if "call_summary" in row.keys() else None,
+        tone_requested=_tone_requested_from_row(row),
+        tone_layers=(
+            json.loads(row["tone_layers"])
+            if "tone_layers" in row.keys() and row["tone_layers"]
+            else None
+        ),
+        tone_skipped=(
+            bool(row["tone_skipped"])
+            if "tone_skipped" in row.keys() and row["tone_skipped"] is not None
+            else None
+        ),
+        tone_time_sec=row["tone_time_sec"] if "tone_time_sec" in row.keys() else None,
+        tone_ser_time_sec=(
+            row["tone_ser_time_sec"] if "tone_ser_time_sec" in row.keys() else None
+        ),
         error=error,
         upload_path=row["upload_path"],
         attempts=int(row["attempts"]) if "attempts" in row.keys() else 0,

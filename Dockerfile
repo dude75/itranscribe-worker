@@ -51,7 +51,7 @@ ENV PATH="/opt/venv/bin:$PATH" \
 
 COPY requirements.txt requirements-ml.txt ./
 RUN python3 -m venv /opt/venv \
-    && pip install --no-cache-dir -U pip \
+    && pip install --no-cache-dir "pip==25.3" \
     && pip install --no-cache-dir -r requirements.txt \
     && pip install --no-cache-dir \
         "torch==${TORCH_VERSION}" \
